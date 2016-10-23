@@ -20,7 +20,6 @@
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
-
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
    before process_execute() returns.  Returns the new process's
@@ -37,7 +36,6 @@ process_execute (const char *file_name)
   if (fn_copy == NULL)
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
-
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
   if (tid == TID_ERROR)
@@ -88,6 +86,7 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid UNUSED) 
 {
+  while(1);
   return -1;
 }
 
@@ -214,21 +213,30 @@ load (const char *file_name, void (**eip) (void), void **esp)
   off_t file_ofset;
   bool success = false;
   int i;
-
+  char *token,*save_ptr;//for strtok_r;
+  int *argv[20];//argv pointer sets
+  int argc;//argument counter
+  char fn_copy[128];
+  //char test_name[128]="/bin/ls -l fo bar";
+  int word_align=0;
+  char fn_exe[128];
+  char temp[128];
+  int arglen=0;
   /* Allocate and activate page directory. */
   t->pagedir = pagedir_create ();
   if (t->pagedir == NULL) 
     goto done;
   process_activate ();
-
-  /* Open executable file. */
-  file = filesys_open (file_name);
+  /* Open executable file.*/
+  strlcpy(temp,file_name,strlen(file_name)+1);
+  token=strtok_r(temp," \t\n",&save_ptr);
+  strlcpy(fn_exe,token,strlen(token)+1);
+  file = filesys_open (fn_exe);
   if (file == NULL) 
     {
       printf ("load: %s: open failed\n", file_name);
       goto done; 
     }
-
   /* Read and verify executable header. */
   if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
       || memcmp (ehdr.e_ident, "\177ELF\1\1\1", 7)
@@ -241,8 +249,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
       printf ("load: %s: error loading executable\n", file_name);
       goto done; 
     }
-
-  /* Read program headers. */
+  /* Read program headers.*/ 
   file_ofset = ehdr.e_phoff;
   for (i = 0; i < ehdr.e_phnum; i++) 
     {
@@ -300,10 +307,56 @@ load (const char *file_name, void (**eip) (void), void **esp)
           break;
         }
     }
-
   /* Set up stack. */
   if (!setup_stack (esp))
     goto done;
+
+  /*Argument Parsing and add arguments to STACK*/
+  strlcpy(fn_copy,file_name,strlen(file_name)+1);
+  //strlcpy(fn_copy,test_name,strlen(test_name)+1);
+  argc=0;
+  token=NULL;
+  save_ptr=NULL;
+  word_align=0;
+  //printf("PHYS_BASE: %d\n",(int)esp);//FOR DEBUG: DON'T FORGET TO ERASE
+  for(token=strtok_r(fn_copy," \n\t",&save_ptr);token!=NULL;token=strtok_r(NULL," \n\t",&save_ptr))
+  {
+      arglen=strlen(token)+1;
+      esp=(void**)((long)esp-arglen);//move ESP
+      word_align+=arglen;
+      strlcpy((char*)esp,token,arglen);
+      //printf("ESP: %d argv[]: %s\n",(int)esp,(char*)esp);//FOR DEBUG: DON'T FORGET TO ERASE
+      argv[argc]=(int*)esp;
+      argc++;
+  }//(type: char*)
+  argv[argc]=NULL;//argv[argc]==NULL which is C standard
+  if(word_align%4!=0)
+  {
+      for(i=0;i<(4-(word_align%4));i++)
+      {
+          esp=(void**)((long)esp-1);//move ESP
+          *(uint8_t*)esp=0;//word_align PUSH
+          //printf("ESP: %d word_align: %u\n",(int)esp,*(uint8_t*)esp);//FOR DEBUG: DON'T FORGET TO ERASE
+      }
+  }
+  /*In STACK, arguments are not in right-to-left order. While pushing argv[], consider the order(right to left)*/
+  for(i=argc;i>=0;i--)
+  {
+      esp=(void**)((long)esp-4);//move ESP
+      *(int**)esp=argv[i];
+      //printf("ESP: %d argv[%d]: %d\n",(int)esp,i,*(int*)esp);//FOR DEBUG: DON'T FORGET TO ERASE
+  }//argv[] PUSH(type:char *)
+  esp=(void**)((long)esp-4);//move ESP
+  *(char***)esp=(char**)((long)esp+4);//argv PUSH(type: char**)
+  //printf("ESP: %d argv: %d\n",(int)esp,*(int*)esp);//FOR DEBUG: DON'T FORGET TO ERASE
+  esp=(void**)((long)esp-4);//move ESP
+  *(int*)esp=argc;//argc PUSH(type: int)
+  //printf("ESP: %d argc: %d\n",(int)esp,*(int*)esp);//FOR DEBUG: DON'T FORGET TO ERASE
+  esp=(void**)((long)esp-4);//move ESP
+  //printf("ESP: %d\n",(int)esp);//FOR DEBUG: DON'T FORGET TO ERASE
+  *esp=0;//fake return address PUSH which is C standard
+  //hex_dump((int)*esp,esp,64,true);//FOR DEBUG: DON'T FORGET TO ERASE
+  //printf("\n-------------------------------------------\n");//FOR DEBUG: DON'T FORGET TO ERASE
 
   /* Start address. */
   *eip = (void (*) (void)) ehdr.e_entry;
