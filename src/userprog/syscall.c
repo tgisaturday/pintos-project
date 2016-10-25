@@ -76,6 +76,7 @@ syscall_handler (struct intr_frame *f UNUSED)
           get_argument(esp,arg,1);
           check_address(arg[0]);
           process_execute(arg[0]);
+
           //use and modify process_execute
           break;
       case SYS_WAIT: //Project 1

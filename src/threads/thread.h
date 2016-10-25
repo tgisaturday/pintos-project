@@ -4,7 +4,7 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
-
+#include "synch.h"
 /* States in a thread's life cycle. */
 enum thread_status
   {
@@ -80,7 +80,7 @@ typedef int tid_t;
    only because they are mutually exclusive: only a thread in the
    ready state is on the run queue, whereas only a thread in the
    blocked state is on a semaphore wait list. */
-struct sync
+struct sync_tool
 {
     struct semaphore sema;
     struct thread* parent;
@@ -95,7 +95,7 @@ struct thread
     uint8_t *stack;                     /* Saved stack pointer. */
     int priority;                       /* Priority. */
     struct list_elem allelem;           /* List element for all threads list. */
-    struct sync                         /*struct sync that contains semaphore, parent, child_list*/
+    struct sync_tool sync;             /*struct sync that contains semaphore, parent, child_list*/
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
 
