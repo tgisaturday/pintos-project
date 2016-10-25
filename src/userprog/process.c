@@ -318,14 +318,14 @@ load (const char *file_name, void (**eip) (void), void **esp)
   token=NULL;
   save_ptr=NULL;
   word_align=0;
-  printf("PHYS_BASE: %d\n",(int)esp);//FOR DEBUG: DON'T FORGET TO ERASE
+  //printf("PHYS_BASE: %d\n",(int)esp);//FOR DEBUG: DON'T FORGET TO ERASE
   for(token=strtok_r(fn_copy," \n\t",&save_ptr);token!=NULL;token=strtok_r(NULL," \n\t",&save_ptr))
   {
       arglen=strlen(token)+1;
-      *esp=(void*)((long)*esp-arglen);//move ESP
+      *esp=(void*)((uintptr_t)*esp-arglen);//move ESP
       word_align+=arglen;
       strlcpy((char*)*esp,token,arglen);
-      printf("ESP: %d argv[]: %s\n",(int)*esp,(char*)*esp);//FOR DEBUG: DON'T FORGET TO ERASE
+      //printf("ESP: %d argv[]: %s\n",(int)*esp,(char*)*esp);//FOR DEBUG: DON'T FORGET TO ERASE
       argv[argc]=(int*)*esp;
       argc++;
   }//(type: char*)
@@ -334,49 +334,40 @@ load (const char *file_name, void (**eip) (void), void **esp)
   {
       for(i=0;i<(4-(word_align%4));i++)
       {
-          *esp=(void*)((long)*esp-1);//move ESP
+          *esp=(void*)((uintptr_t)*esp-1);//move ESP
           *(uint8_t*)*esp=0;//word_align PUSH
-          printf("ESP: %d word_align: %u\n",(int)*esp,*(uint8_t*)*esp);//FOR DEBUG: DON'T FORGET TO ERASE
+          //printf("ESP: %d word_align: %u\n",(int)*esp,*(uint8_t*)*esp);//FOR DEBUG: DON'T FORGET TO ERASE
       }
   }
   /*In STACK, arguments are not in right-to-left order. While pushing argv[], consider the order(right to left)*/
   for(i=argc;i>=0;i--)
   {
-      *esp=(void*)((long)*esp-4);//move ESP
+      *esp=(void*)((uintptr_t)*esp-4);//move ESP
       *(int**)*esp=argv[i];
-      printf("ESP: %d argv[%d]: %d\n",(int)*esp,i,*(int*)*esp);//FOR DEBUG: DON'T FORGET TO ERASE
+      //printf("ESP: %d argv[%d]: %d\n",(int)*esp,i,*(int*)*esp);//FOR DEBUG: DON'T FORGET TO ERASE
   }//argv[] PUSH(type:char *)
-  *esp=(void*)((long)*esp-4);//move ESP
-  *(char***)*esp=(char**)((long)*esp+4);//argv PUSH(type: char**)
-  printf("ESP: %d argv: %d\n",(int)*esp,*(int*)*esp);//FOR DEBUG: DON'T FORGET TO ERASE
-  *esp=(void*)((long)*esp-4);//move ESP
+  *esp=(void*)((uintptr_t)*esp-4);//move ESP
+  *(char***)*esp=(char**)((int)*esp+4);//argv PUSH(type: char**)
+  //printf("ESP: %d argv: %d\n",(int)*esp,*(int*)*esp);//FOR DEBUG: DON'T FORGET TO ERASE
+  *esp=(void*)((uintptr_t)*esp-4);//move ESP
   *(int*)*esp=argc;//argc PUSH(type: int)
-  printf("ESP: %d argc: %d\n",(int)*esp,*(int*)*esp);//FOR DEBUG: DON'T FORGET TO ERASE
-  *esp=(void*)((long)*esp-4);//move ESP
-  printf("ESP: %d\n",(int)*esp);//FOR DEBUG: DON'T FORGET TO ERASE
+  //printf("ESP: %d argc: %d\n",(int)*esp,*(int*)*esp);//FOR DEBUG: DON'T FORGET TO ERASE
+  *esp=(void*)((uintptr_t)*esp-4);//move ESP
+  //printf("ESP: %d\n",(int)*esp);//FOR DEBUG: DON'T FORGET TO ERASE
   *(void**)*esp=(void(*)())0;//fake return address PUSH which is C standard
-  hex_dump((int)*esp,*esp,64,true);//FOR DEBUG: DON'T FORGET TO ERASE
-  printf("\n-------------------------------------------\n");//FOR DEBUG: DON'T FORGET TO ERASE
+  //hex_dump((int)*esp,*esp,64,true);//FOR DEBUG: DON'T FORGET TO ERASE
+  //printf("\n-------------------------------------------\n");//FOR DEBUG: DON'T FORGET TO ERASE
 
   /* Start address. */
-  hex_dump((int)*esp,*esp,64,true);//FOR DEBUG: DON'T FORGET TO ERASE
-  printf("\n-------------------------------------------\n");//FOR DEBUG: DON'T FORGET TO ERASE
   *eip = (void (*) (void)) ehdr.e_entry;
 
-  hex_dump((int)*esp,*esp,64,true);//FOR DEBUG: DON'T FORGET TO ERASE
-  printf("\n-------------------------------------------\n");//FOR DEBUG: DON'T FORGET TO ERASE
   success = true;
 
  done:
   /* We arrive here whether the load is successful or not. */
-  hex_dump((int)*esp,*esp,64,true);//FOR DEBUG: DON'T FORGET TO ERASE
-  printf("\n-------------------------------------------\n");//FOR DEBUG: DON'T FORGET TO ERASE
   file_close (file);
-  hex_dump((int)*esp,*esp,64,true);//FOR DEBUG: DON'T FORGET TO ERASE
-  printf("\n-------------------------------------------\n");//FOR DEBUG: DON'T FORGET TO ERASE
   return success;
 }
-
 /* load() helpers. */
 
 static bool install_page (void *upage, void *kpage, bool writable);
