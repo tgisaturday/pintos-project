@@ -17,6 +17,7 @@
 #include "threads/palloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#define COMMAND_LINE 128
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
@@ -28,16 +29,29 @@ tid_t
 process_execute (const char *file_name) 
 {
   char *fn_copy;
+  struct thread *child;
+  char *token;
+  char *save_ptr;
+  char temp[COMMAND_LINE];
   tid_t tid;
-
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
   fn_copy = palloc_get_page (0);
   if (fn_copy == NULL)
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
+  strlcpy (temp, file_name, PGSIZE);
+  token=strtok_r(temp," \t\n",&save_ptr);
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
+  tid = thread_create (token, PRI_DEFAULT, start_process, fn_copy);
+  
+  if(tid!=TID_ERROR)
+  {
+      child=search_thread(tid);
+      child->sync.parent=thread_current()->tid;
+      list_push_back(&(thread_current()->sync.child_list),&(child->sync.elem));
+      //thread push (child)
+  }
   if (tid == TID_ERROR)
     palloc_free_page (fn_copy); 
   return tid;
@@ -84,10 +98,24 @@ start_process (void *file_name_)
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
 int
-process_wait (tid_t child_tid UNUSED) 
+process_wait (tid_t child_tid) 
 {
-  while(1);
-  return -1;
+    struct thread* child;
+    //1. check if tid is really thread_current()'s child
+    if(is_child(child_tid)==NULL)
+        return -1;
+    else if(search_thread(child_tid)==NULL)
+        return -1;
+    //2. no double waiting
+    child=search_thread(child_tid);
+    if(child->sync.exit_status==-1)
+    {
+        list_remove(&child->sync.elem);
+        return child->sync.exit_status;    
+    }
+    sema_down(&(thread_current()->sync.wait));
+    list_remove(&child->sync.elem);
+    return child->sync.exit_status;
 }
 
 /* Free the current process's resources. */
@@ -96,7 +124,14 @@ process_exit (void)
 {
   struct thread *cur = thread_current ();
   uint32_t *pd;
+  struct thread* parent;
 
+  parent=search_thread(cur->sync.parent);
+
+  if(parent->tid!=-1)
+  {
+      sema_up(&(parent->sync.wait));
+  }
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
   pd = cur->pagedir;
@@ -113,6 +148,7 @@ process_exit (void)
       pagedir_activate (NULL);
       pagedir_destroy (pd);
     }
+  //child_block?
 }
 
 /* Sets up the CPU for running user code in the current
@@ -216,12 +252,13 @@ load (const char *file_name, void (**eip) (void), void **esp)
   char *token,*save_ptr;//for strtok_r;
   int *argv[20];//argv pointer sets
   int argc;//argument counter
-  char fn_copy[128];
+  char fn_copy[COMMAND_LINE];
   //char test_name[128]="/bin/ls -l fo bar";
   int word_align=0;
-  char fn_exe[128];
-  char temp[128];
+  char fn_exe[COMMAND_LINE];
+  char temp[COMMAND_LINE];
   int arglen=0;
+  struct thread* parent;
   /* Allocate and activate page directory. */
   t->pagedir = pagedir_create ();
   if (t->pagedir == NULL) 
@@ -235,6 +272,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
   if (file == NULL) 
     {
       printf ("load: %s: open failed\n", file_name);
+      thread_current()->sync.exit_status=-1;
       goto done; 
     }
   /* Read and verify executable header. */
@@ -365,6 +403,8 @@ load (const char *file_name, void (**eip) (void), void **esp)
 
  done:
   /* We arrive here whether the load is successful or not. */
+  parent=search_thread(thread_current()->sync.parent);
+  sema_up(&(parent->sync.exec));
   file_close (file);
   return success;
 }

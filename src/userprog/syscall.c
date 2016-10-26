@@ -20,11 +20,20 @@ void check_address(void* address)
 {
     struct thread *cur=thread_current();
     if (address==NULL)
-        process_exit();//exit(-1);
+    {
+        thread_current()->sync.exit_status=-1;
+        thread_exit();//exit(-1);
+    }
     else if(is_kernel_vaddr(address))
-        process_exit();//exit(-1);
+    {
+        thread_current()->sync.exit_status=-1;
+        thread_exit();//exit(-1);
+    }
     else if(pagedir_get_page(cur->pagedir,address)==NULL)
-        process_exit();//exit(-1);
+    {
+        thread_current()->sync.exit_status=-1;
+        thread_exit();//exit(-1);
+    }
 }
 void get_argument(void *esp, void **arg, int count)
 {
@@ -43,10 +52,12 @@ syscall_handler (struct intr_frame *f UNUSED)
   //check if f->esp is pointing somewhere in user memory.
   //check if data stored in f->esp is address in user memory.
   void *esp=f->esp;
-  int syscall_num=*(int*)esp;
+  int syscall_num;
   void *arg[10];
   int i;
+  int exit_status;
   int read_count;
+  tid_t tid;
   /*This is a test how arguments of syscall read() is passed to syscall_handler(used in args-single onearg)*/
   /*hex_dump((int)esp,esp,64,true);
   printf("syscall_num: %d\n",*(int*)esp);
@@ -55,9 +66,10 @@ syscall_handler (struct intr_frame *f UNUSED)
   esp=(void*)((uintptr_t)esp+4);
   printf("argv address: %04x argv: %04x\n",(int)esp,*(int*)esp);
   esp=(void*)((uintptr_t)esp+4);
-  printf("argv address: %04x argv: %d\n",(int)esp,*(int*)esp);
-  printf ("system call!\n");
-  thread_exit ();*/
+  printf("argv address: %04x argv: %d\n",(int)esp,*(int*)esp);*/
+
+  check_address(esp);
+  syscall_num=*(int*)esp;
   esp=(void*)((uintptr_t)esp+4);
   switch(syscall_num)
   {
@@ -68,21 +80,24 @@ syscall_handler (struct intr_frame *f UNUSED)
       case SYS_EXIT: //Project 1
           get_argument(esp,arg,1);
           check_address(arg[0]);
+          thread_current()->sync.exit_status=*(int*)arg[0];
           printf("%s: exit(%d)\n",thread_current()->name,*(int*)arg[0]);
           //modify everything in thread_exit()
-          process_exit();
+          thread_exit();
           break;
       case SYS_EXEC: //Project 1
           get_argument(esp,arg,1);
           check_address(arg[0]);
-          process_execute(arg[0]);
-
+          tid=process_execute(*(char**)(arg[0]));
+          sema_down(&(thread_current()->sync.exec));
+          f->eax=tid;
           //use and modify process_execute
           break;
       case SYS_WAIT: //Project 1
-          get_argument(esp,arg,1);//semaphore synchronization
+          get_argument(esp,arg,1);
           check_address(arg[0]);
-          //process_wait();
+          exit_status=process_wait(*(int*)arg[0]);
+          f->eax=exit_status;
           break;
       case SYS_CREATE:
           break;
@@ -137,7 +152,7 @@ syscall_handler (struct intr_frame *f UNUSED)
       case SYS_INUMBER:
           break;
       default:
-          printf("Fucking Not Guhyeoned!");
+          printf("Fucking! Not Guhyeoned!");
           thread_exit();
   };
 }

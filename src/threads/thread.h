@@ -82,12 +82,16 @@ typedef int tid_t;
    blocked state is on a semaphore wait list. */
 struct sync_tool
 {
-    struct semaphore sema;
-    struct thread* parent;
+    struct semaphore wait;
+    struct semaphore exec;
+    int exit_status;
+    tid_t parent;
     struct list child_list;
+    struct list_elem elem;
 };
 struct thread
   {
+    struct sync_tool sync;             /*struct sync that contains semaphore, parent, child_list*/
     /* Owned by thread.c. */
     tid_t tid;                          /* Thread identifier. */
     enum thread_status status;          /* Thread state. */
@@ -95,7 +99,6 @@ struct thread
     uint8_t *stack;                     /* Saved stack pointer. */
     int priority;                       /* Priority. */
     struct list_elem allelem;           /* List element for all threads list. */
-    struct sync_tool sync;             /*struct sync that contains semaphore, parent, child_list*/
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
 
@@ -144,5 +147,6 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
-
+struct thread* search_thread (tid_t tid);
+struct thread* is_child(tid_t child_tid);
 #endif /* threads/thread.h */
