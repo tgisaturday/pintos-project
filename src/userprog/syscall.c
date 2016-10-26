@@ -8,6 +8,7 @@
 #include "pagedir.h"
 #include "devices/shutdown.h"
 #include "devices/input.h"
+#include <string.h>
 static void syscall_handler (struct intr_frame *);
 
 
@@ -57,6 +58,8 @@ syscall_handler (struct intr_frame *f UNUSED)
   int i;
   int exit_status;
   int read_count;
+  struct thread *t=thread_current();
+  struct thread *parent;
   tid_t tid;
   /*This is a test how arguments of syscall read() is passed to syscall_handler(used in args-single onearg)*/
   /*hex_dump((int)esp,esp,64,true);
@@ -80,17 +83,27 @@ syscall_handler (struct intr_frame *f UNUSED)
       case SYS_EXIT: //Project 1
           get_argument(esp,arg,1);
           check_address(arg[0]);
-          thread_current()->sync.exit_status=*(int*)arg[0];
-          printf("%s: exit(%d)\n",thread_current()->name,*(int*)arg[0]);
+          t->sync.exit_status=*(int*)arg[0];
           //modify everything in thread_exit()
           thread_exit();
           break;
       case SYS_EXEC: //Project 1
           get_argument(esp,arg,1);
           check_address(arg[0]);
+          check_address(*(char**)arg[0]);
           tid=process_execute(*(char**)(arg[0]));
-          sema_down(&(thread_current()->sync.exec));
-          f->eax=tid;
+          if(t->sync.exit_status==-1)
+          {
+              f->eax=-1;
+              parent=search_thread(t->sync.parent);
+              sema_up(&(parent->sync.exec));
+              thread_exit();
+          }
+          else
+          {
+              f->eax=tid;
+              sema_down(&(t->sync.exec));
+          }
           //use and modify process_execute
           break;
       case SYS_WAIT: //Project 1

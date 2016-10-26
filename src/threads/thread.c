@@ -287,18 +287,21 @@ thread_tid (void)
 void
 thread_exit (void) 
 {
+  struct thread* cur=thread_current();
   ASSERT (!intr_context ());
 
 #ifdef USERPROG
   process_exit ();
 #endif
 
+
+
   /* Remove thread from all threads list, set our status to dying,
      and schedule another process.  That process will destroy us
      when it calls thread_schedule_tail(). */
   intr_disable ();
-  list_remove (&thread_current()->allelem);
-  thread_current ()->status = THREAD_DYING;
+  list_remove (&cur->allelem);
+  cur->status = THREAD_DYING;
   schedule ();
   NOT_REACHED ();
 }
@@ -594,27 +597,37 @@ struct thread* search_thread(tid_t tid)
 {
     struct list_elem *e;
     struct thread *cur_thread;
+    enum intr_level old_level;
 
+    old_level=intr_disable();
     for(e=list_begin(&all_list);e!=list_end(&all_list);e=list_next(e))
     {
         cur_thread=list_entry(e,struct thread,allelem);
         if(tid==cur_thread->tid)
         {
+            intr_set_level(old_level);
             return cur_thread;
         }
     }
+    intr_set_level(old_level);
     return NULL;
 }
 struct thread* is_child(tid_t child_tid)
 {
     struct list_elem *e;
     struct thread *cur_thread;
+    enum intr_level old_level;
 
+    old_level=intr_disable();
     for(e=list_begin(&(thread_current()->sync.child_list));e!=list_end(&(thread_current()->sync.child_list));e=list_next(e))
     {
         cur_thread=(struct thread*)(list_entry(e,struct sync_tool,elem));
         if(child_tid==cur_thread->tid)
+        {
+            intr_set_level(old_level);
             return cur_thread;
+        }
     }
+    intr_set_level(old_level);
     return NULL;
 }

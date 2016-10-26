@@ -30,9 +30,6 @@ process_execute (const char *file_name)
 {
   char *fn_copy;
   struct thread *child;
-  char *token;
-  char *save_ptr;
-  char temp[COMMAND_LINE];
   tid_t tid;
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
@@ -40,10 +37,8 @@ process_execute (const char *file_name)
   if (fn_copy == NULL)
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
-  strlcpy (temp, file_name, PGSIZE);
-  token=strtok_r(temp," \t\n",&save_ptr);
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (token, PRI_DEFAULT, start_process, fn_copy);
+  tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
   
   if(tid!=TID_ERROR)
   {
@@ -101,20 +96,23 @@ int
 process_wait (tid_t child_tid) 
 {
     struct thread* child;
+
+    child=search_thread(child_tid);
     //1. check if tid is really thread_current()'s child
     if(is_child(child_tid)==NULL)
         return -1;
     else if(search_thread(child_tid)==NULL)
         return -1;
     //2. no double waiting
-    child=search_thread(child_tid);
     if(child->sync.exit_status==-1)
     {
         list_remove(&child->sync.elem);
+        sema_up(&(child->sync.wait));
         return child->sync.exit_status;    
     }
     sema_down(&(thread_current()->sync.wait));
     list_remove(&child->sync.elem);
+    sema_up(&(child->sync.wait));
     return child->sync.exit_status;
 }
 
@@ -123,15 +121,14 @@ void
 process_exit (void)
 {
   struct thread *cur = thread_current ();
-  uint32_t *pd;
   struct thread* parent;
-
+  uint32_t *pd;
+  char* token;
+  char* save_ptr;
   parent=search_thread(cur->sync.parent);
 
-  if(parent->tid!=-1)
-  {
-      sema_up(&(parent->sync.wait));
-  }
+  token=strtok_r(cur->name," \t\n",&save_ptr);
+  printf("%s: exit(%d)\n",token,cur->sync.exit_status);
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
   pd = cur->pagedir;
@@ -148,6 +145,16 @@ process_exit (void)
       pagedir_activate (NULL);
       pagedir_destroy (pd);
     }
+  if(parent->tid!=-1)
+  {
+      sema_up(&(parent->sync.wait));
+      if(cur->tid!=1)
+      {
+          sema_down(&(cur->sync.wait));
+      }
+  }
+  else
+      sema_up(&(parent->sync.wait));
   //child_block?
 }
 
@@ -404,8 +411,11 @@ load (const char *file_name, void (**eip) (void), void **esp)
  done:
   /* We arrive here whether the load is successful or not. */
   parent=search_thread(thread_current()->sync.parent);
-  sema_up(&(parent->sync.exec));
   file_close (file);
+  if(thread_current()->sync.exit_status==-1)
+  {
+      thread_exit();
+  }
   return success;
 }
 /* load() helpers. */
