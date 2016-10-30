@@ -174,12 +174,12 @@ thread_create (const char *name, int priority,
   enum intr_level old_level;
 
   ASSERT (function != NULL);
+
   /* Allocate thread. */
   t = palloc_get_page (PAL_ZERO);
   if (t == NULL)
-  {
-     return TID_ERROR;
-  }
+    return TID_ERROR;
+
   /* Initialize thread. */
   init_thread (t, name, priority);
   tid = t->tid = allocate_tid ();
@@ -208,6 +208,7 @@ thread_create (const char *name, int priority,
 
   /* Add to run queue. */
   thread_unblock (t);
+
   return tid;
 }
 
@@ -287,21 +288,18 @@ thread_tid (void)
 void
 thread_exit (void) 
 {
-  struct thread* cur=thread_current();
   ASSERT (!intr_context ());
 
 #ifdef USERPROG
   process_exit ();
 #endif
 
-
-
   /* Remove thread from all threads list, set our status to dying,
      and schedule another process.  That process will destroy us
      when it calls thread_schedule_tail(). */
   intr_disable ();
-  list_remove (&cur->allelem);
-  cur->status = THREAD_DYING;
+  list_remove (&thread_current()->allelem);
+  thread_current ()->status = THREAD_DYING;
   schedule ();
   NOT_REACHED ();
 }
@@ -471,10 +469,6 @@ init_thread (struct thread *t, const char *name, int priority)
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
   t->magic = THREAD_MAGIC;
-  list_init(&(t->sync.child_list));
-  t->sync.parent=-1;
-  sema_init(&(t->sync.wait),0);
-  sema_init(&(t->sync.exec),0);
   list_push_back (&all_list, &t->allelem);
 }
 
@@ -587,47 +581,7 @@ allocate_tid (void)
 
   return tid;
 }
-
+
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);
-
-/*Search for thread using tid*/
-struct thread* search_thread(tid_t tid)
-{
-    struct list_elem *e;
-    struct thread *cur_thread;
-    enum intr_level old_level;
-
-    old_level=intr_disable();
-    for(e=list_begin(&all_list);e!=list_end(&all_list);e=list_next(e))
-    {
-        cur_thread=list_entry(e,struct thread,allelem);
-        if(tid==cur_thread->tid)
-        {
-            intr_set_level(old_level);
-            return cur_thread;
-        }
-    }
-    intr_set_level(old_level);
-    return NULL;
-}
-struct thread* is_child(tid_t child_tid)
-{
-    struct list_elem *e;
-    struct thread *cur_thread;
-    enum intr_level old_level;
-
-    old_level=intr_disable();
-    for(e=list_begin(&(thread_current()->sync.child_list));e!=list_end(&(thread_current()->sync.child_list));e=list_next(e))
-    {
-        cur_thread=(struct thread*)(list_entry(e,struct sync_tool,elem));
-        if(child_tid==cur_thread->tid)
-        {
-            intr_set_level(old_level);
-            return cur_thread;
-        }
-    }
-    intr_set_level(old_level);
-    return NULL;
-}
