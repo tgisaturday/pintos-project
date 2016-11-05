@@ -17,7 +17,7 @@
 #include "threads/palloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
-#define COMMAND_LINE 128
+#define COMMAND_LINE 64
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
@@ -51,7 +51,6 @@ process_execute (const char *file_name)
   }
   if (tid == TID_ERROR)
     palloc_free_page (fn_copy); 
-
   return tid;
 }
 
@@ -62,8 +61,8 @@ start_process (void *file_name_)
 {
   char *file_name = file_name_;
   struct intr_frame if_;
-  bool success;
   struct thread* parent;
+  bool success;
   parent=search_thread(thread_current()->sync.parent);
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
@@ -71,14 +70,17 @@ start_process (void *file_name_)
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
   success = load (file_name, &if_.eip, &if_.esp);
-  sema_up(&(parent->sync.exec));
   /* If load failed, quit. */
   palloc_free_page (file_name);
   if (!success)
   {
+      thread_current()->sync.exit_status=-1;
+      //parent->sync.exit_status=-1;
+      sema_up(&(thread_current()->sync.exec));
       thread_exit ();
   }
-
+  else
+      sema_up(&(thread_current()->sync.exec));
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
      threads/intr-stubs.S).  Because intr_exit takes all of its
@@ -106,33 +108,29 @@ process_wait (tid_t child_tid)
     int exit;
     cur=thread_current();
     child=search_thread(child_tid);
+    int old_level = intr_disable();
   
     //1. check if tid is really thread_current()'s child
     if(search_thread(child_tid)==NULL)
     {
         exit=-1;
+        intr_set_level(old_level);
     }
     else if(is_child(child_tid)==NULL)
     {
         exit=-1;
-        sema_up(&(child->sync.exec));//child should wait until parent takes it's exit_status(unlock here)
-    }
-    //2. no double waiting
-    else if(child->sync.exit_status==-1)
-    {
-        exit=-1;
-        sema_up(&(child->sync.exec));//child should wait until parent takes it's exit_status(unlock here)
+        intr_set_level(old_level);
     }
     else
     {
-        sema_down(&(cur->sync.wait));//parent should wait until child exit(lock here)
+        intr_set_level(old_level);
+        sema_down(&(child->sync.wait));//parent should wait until child exit(lock here)
         exit=child->sync.exit_status;
-
-        sema_up(&(child->sync.exec));//child should wait until parent takes it's exit_status(unlock here)
+        if(!list_empty(&(cur->sync.child_list)))
+            list_remove(&(child->sync.elem));//if not empty
+        sema_up(&(child->sync.exit));//child should wait until parent takes it's exit_status(unlock here)
     }
 
-    if(!list_empty(&(cur->sync.child_list)))
-        list_remove(&(child->sync.elem));//if not empty
     return exit;
 }
 
@@ -145,8 +143,11 @@ process_exit (void)
   uint32_t *pd;
   char* token;
   char* save_ptr;
+  enum intr_level old_level;
+  struct list_elem *e;
+  struct thread *undead;
   parent=search_thread(cur->sync.parent);
-  sema_up(&(parent->sync.wait));//parent should wait until child exit(unlock here)
+  sema_up(&(cur->sync.wait));//parent should wait until child exit(unlock here)
   token=strtok_r(cur->name," \t\n",&save_ptr);
   printf("%s: exit(%d)\n",token,cur->sync.exit_status);
   /* Destroy the current process's page directory and switch back
@@ -165,7 +166,19 @@ process_exit (void)
       pagedir_activate (NULL);
       pagedir_destroy (pd);
     }
-  sema_down(&(cur->sync.exec));//child should wait until parent takes it's exit_status(lock here)
+
+  old_level = intr_disable ();
+  if(!list_empty(&(cur->sync.child_list)))
+  {
+      for(e=list_begin(&(cur->sync.child_list));e!=list_end(&(cur->sync.child_list));e=list_next(e))
+      {
+          undead=list_entry(e,struct thread,sync.elem);
+          sema_up(&(undead->sync.exit));
+          list_remove(e);
+      }
+  }
+  intr_set_level (old_level);
+  sema_down(&(cur->sync.exit));//child should wait until parent takes it's exit_status(lock here)
 }
 
 /* Sets up the CPU for running user code in the current
@@ -261,7 +274,6 @@ bool
 load (const char *file_name, void (**eip) (void), void **esp) 
 {
   struct thread *t = thread_current ();
-  struct thread *parent;
   struct Elf32_Ehdr ehdr;
   struct file *file = NULL;
   off_t file_ofset;
@@ -278,7 +290,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
   int arglen=0;
   /* Allocate and activate page directory. */
   t->pagedir = pagedir_create ();
-  if (t->pagedir == NULL) 
+  if (t->pagedir == NULL)
     goto done;
   process_activate ();
   /* Open executable file.*/
@@ -289,9 +301,6 @@ load (const char *file_name, void (**eip) (void), void **esp)
   if (file == NULL) 
     {
       printf ("load: %s: open failed\n", file_name);
-      t->sync.exit_status=-1;
-      parent=search_thread(t->sync.parent);
-      parent->sync.exit_status=-1;
       goto done; 
     }
   /* Read and verify executable header. */

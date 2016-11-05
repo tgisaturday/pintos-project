@@ -84,6 +84,7 @@ struct sync_tool
 {
     struct semaphore wait;
     struct semaphore exec;
+    struct semaphore exit;
     int exit_status;
     tid_t parent;
     struct list child_list;

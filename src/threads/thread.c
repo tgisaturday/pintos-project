@@ -114,7 +114,7 @@ thread_start (void)
   list_init(&(cur->sync.child_list));
   sema_init(&(cur->sync.wait),0);
   sema_init(&(cur->sync.exec),0);
-
+  sema_init(&(cur->sync.exit),0);
   sema_init (&start_idle, 0);
   thread_create ("idle", PRI_MIN, idle, &start_idle);
   
@@ -295,9 +295,7 @@ thread_tid (void)
 void
 thread_exit (void) 
 {
-  struct thread* parent;
   struct thread* cur=thread_current();
-  parent=search_thread(cur->sync.parent);
   ASSERT (!intr_context ());
 
 #ifdef USERPROG
@@ -484,6 +482,7 @@ init_thread (struct thread *t, const char *name, int priority)
   list_init(&(t->sync.child_list));
   sema_init(&(t->sync.wait),0);
   sema_init(&(t->sync.exec),0);
+  sema_init(&(t->sync.exit),0);
   list_push_back (&all_list, &t->allelem);
 }
 
