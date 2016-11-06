@@ -113,11 +113,13 @@ syscall_handler (struct intr_frame *f UNUSED)
           {
               child=search_thread(tid);          
               sema_down(&(child->sync.exec));
-              if(child->sync.exit_status==-1) {
+              if(child->sync.exit_status==-1) 
+              {
                   sema_up(&(child->sync.exec));
                   f->eax=-1;
               } 
-              else {
+              else 
+              {
                   f->eax=tid;
               }
           }
@@ -136,21 +138,27 @@ syscall_handler (struct intr_frame *f UNUSED)
           for(i=0;i<2;i++)
               check_address(arg[i]);
           check_address(*(char**)arg[0]);
+          lock_acquire(&file_rw);
           rt=filesys_create(*(char**)arg[0],*(int32_t*)arg[1]);
+          lock_release(&file_rw);
           f->eax=rt;
           break;
       case SYS_REMOVE: 
           get_argument(esp,arg,1);
           check_address(arg[0]);
           check_address(*(char**)arg[0]);
+          lock_acquire(&file_rw);
           rt=filesys_remove(*(char**)arg[0]);
+          lock_release(&file_rw);
           f->eax=rt;
           break;
       case SYS_OPEN:
           get_argument(esp,arg,1);
           check_address(arg[0]);
           check_address(*(char**)arg[0]);
+          lock_acquire(&file_rw);
           new_file=filesys_open(*(char**)arg[0]);
+          lock_release(&file_rw);
           if(new_file==NULL)
           {
               f->eax=-1;
