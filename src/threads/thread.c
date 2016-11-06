@@ -11,6 +11,8 @@
 #include "threads/switch.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
+#include "threads/malloc.h"
+#include "filesys/file.h"
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
@@ -110,11 +112,17 @@ thread_start (void)
   struct semaphore start_idle;
   
   cur=thread_current();
+#ifdef USERPROG
   cur->sync.exit_status=0;
   list_init(&(cur->sync.child_list));
   sema_init(&(cur->sync.wait),0);
   sema_init(&(cur->sync.exec),0);
   sema_init(&(cur->sync.exit),0);
+  lock_init(&(file_rw));
+  lock_init(&(cur->sync.fd_lock));
+  cur->sync.fd_gen=2;
+  list_init(&(cur->sync.file_list));
+#endif
   sema_init (&start_idle, 0);
   thread_create ("idle", PRI_MIN, idle, &start_idle);
   
@@ -299,6 +307,8 @@ thread_exit (void)
   ASSERT (!intr_context ());
 
 #ifdef USERPROG
+/*  if(cur->sync.exit_status==-1)
+      PANIC("HELLO!\n");*/
   process_exit ();
 #endif
 
@@ -478,11 +488,16 @@ init_thread (struct thread *t, const char *name, int priority)
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
   t->magic = THREAD_MAGIC;
+#ifdef USERPROG
   t->sync.exit_status=0;
   list_init(&(t->sync.child_list));
   sema_init(&(t->sync.wait),0);
   sema_init(&(t->sync.exec),0);
   sema_init(&(t->sync.exit),0);
+  lock_init(&(t->sync.fd_lock));
+  t->sync.fd_gen=2;
+  list_init(&(t->sync.file_list));
+#endif
   list_push_back (&all_list, &t->allelem);
 }
 
@@ -599,7 +614,7 @@ allocate_tid (void)
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);
-
+#ifdef USERPROG
 /*Search for thread using tid*/
 struct thread* search_thread(tid_t tid)
 {
@@ -639,3 +654,44 @@ struct thread* is_child(tid_t child_tid)
     intr_set_level(old_level);
     return NULL;
 }
+struct file* search_file(int fd)
+{
+    struct list_elem *e;
+    struct file_data *cur_file;
+    enum intr_level old_level;
+
+    old_level=intr_disable();
+    for(e=list_begin(&(thread_current()->sync.file_list));e!=list_end(&(thread_current()->sync.file_list));e=list_next(e))
+    {
+        cur_file=(struct file_data*)(list_entry(e,struct file_data,elem));
+        if(cur_file->fd==fd)
+        {
+            intr_set_level(old_level);
+            return cur_file->file;
+        }
+    }
+    intr_set_level(old_level);
+    return NULL;
+}
+void remove_fd(int fd)
+{
+    struct list_elem *e;
+    struct file_data *cur_file;
+
+    enum intr_level old_level;
+    old_level=intr_disable();
+    for(e=list_begin(&(thread_current()->sync.file_list));e!=list_end(&(thread_current()->sync.file_list));e=list_next(e))
+    {
+        cur_file=(struct file_data*)(list_entry(e,struct file_data,elem));
+        if(cur_file->fd==fd)
+        {
+            file_close(cur_file->file);
+            list_remove(e);
+            free(cur_file);
+            intr_set_level(old_level);
+            return;
+        }
+    }
+    intr_set_level(old_level);
+}
+#endif

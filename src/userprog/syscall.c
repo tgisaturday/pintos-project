@@ -4,6 +4,7 @@
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "threads/malloc.h"
 #include "process.h"
 #include "pagedir.h"
 #include "devices/shutdown.h"
@@ -82,8 +83,9 @@ syscall_handler (struct intr_frame *f UNUSED)
   struct thread *t=thread_current();
   struct thread *child;
   bool rt;
-  int fd;
+  unsigned uint_f;
   struct file* new_file;
+  struct file_data* new_file_data;
   tid_t tid;
   
   check_address(esp);
@@ -114,7 +116,8 @@ syscall_handler (struct intr_frame *f UNUSED)
               if(child->sync.exit_status==-1) {
                   sema_up(&(child->sync.exec));
                   f->eax=-1;
-              } else {
+              } 
+              else {
                   f->eax=tid;
               }
           }
@@ -144,26 +147,49 @@ syscall_handler (struct intr_frame *f UNUSED)
           f->eax=rt;
           break;
       case SYS_OPEN:
-          f->eax=-1;
-          break;
           get_argument(esp,arg,1);
           check_address(arg[0]);
           check_address(*(char**)arg[0]);
           new_file=filesys_open(*(char**)arg[0]);
-          //fd=;
-          f->eax=fd;
+          if(new_file==NULL)
+          {
+              f->eax=-1;
+              break;
+          }
+
+          new_file_data=calloc(1,sizeof(struct file_data));
+          if(new_file_data==NULL)
+          {
+              f->eax=-1;
+              break;
+          }
+          lock_acquire(&(t->sync.fd_lock));
+
+          new_file_data->fd=t->sync.fd_gen;
+          new_file_data->file=new_file;
+          list_push_back(&(t->sync.file_list),&(new_file_data->elem));
+          (t->sync.fd_gen)++;
+
+          lock_release(&(t->sync.fd_lock));
+          f->eax=new_file_data->fd;
           break;
       case SYS_FILESIZE:
           get_argument(esp,arg,1);
           check_address(arg[0]);
-          //fd=;
-          f_size=file_length(*(struct file**)arg[0]);
-          f->eax=fd;
+          new_file=search_file(*(int*)arg[0]);
+          if(new_file==NULL)
+          {
+              f->eax=-1;
+              break;
+          }
+          f_size=file_length(new_file);
+          f->eax=f_size;
           break;
       case SYS_READ: //Project 1
           get_argument(esp,arg,3);
           for(i=0;i<3;i++) 
               check_address(arg[i]);
+          check_address(*(void**)arg[1]);
           if(*(int*)arg[0]==0)
           {
               read_count=0;
@@ -178,23 +204,64 @@ syscall_handler (struct intr_frame *f UNUSED)
           }
           else
           {
+              lock_acquire(&(file_rw));
+              new_file=search_file(*(int*)arg[0]);
+              if(new_file!=NULL)
+              {
+                  f_size=file_read(new_file,*(void**)arg[1],*(int*)arg[2]);
+                  f->eax=f_size;
+              }
+              else
+                  f->eax=-1;
+              lock_release(&(file_rw));
           }
           break;
       case SYS_WRITE: //Project 1
           get_argument(esp,arg,3);
           for(i=0;i<3;i++)
               check_address(arg[i]);
+          check_address(*(void**)arg[1]);
           if(*(int*)arg[0]==1)
               putbuf(*(char**)(arg[1]),*(int*)(arg[2]));
           else
           {
+              lock_acquire(&(file_rw));
+              new_file=search_file(*(int*)arg[0]);
+              if(new_file!=NULL)
+              {
+                  f_size=file_write(new_file,*(void**)arg[1],*(int*)arg[2]);
+                  f->eax=f_size;
+              }
+              else
+                  f->eax=-1;
+              lock_release(&(file_rw));
           }
           break;
       case SYS_SEEK:
+          get_argument(esp,arg,2);
+          for(i=0;i<2;i++)
+              check_address(arg[i]);
+          new_file=search_file(*(int*)arg[0]);
+          if(new_file!=NULL)
+          {
+              file_seek(new_file,*(off_t*)arg[1]);
+          }
           break;
       case SYS_TELL:
+          get_argument(esp,arg,1);
+          check_address(arg[0]);
+          new_file=search_file(*(int*)arg[0]);
+          if(new_file!=NULL)
+          {
+              uint_f=file_tell(new_file);
+              f->eax=uint_f;
+          }
           break;
       case SYS_CLOSE:
+          check_address(arg[0]);
+          lock_acquire(&(file_rw));
+          remove_fd(*(int*)arg[0]);
+          lock_release(&(file_rw));
           break;
       case SYS_MMAP:
           break;

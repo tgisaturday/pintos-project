@@ -17,7 +17,8 @@
 #include "threads/palloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
-#define COMMAND_LINE 64
+#include "threads/malloc.h"
+#define COMMAND_LINE 128
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
@@ -30,7 +31,7 @@ process_execute (const char *file_name)
 {
   char *fn_copy;
   struct thread *child;
-  struct thread *cur;
+  struct thread *cur=thread_current();
   tid_t tid;
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
@@ -43,6 +44,7 @@ process_execute (const char *file_name)
   
   if(tid!=TID_ERROR)
   {
+      cur->sync.exec_file=NULL;
       child=search_thread(tid);
       cur=thread_current();
       child->sync.parent=thread_current()->tid;
@@ -62,6 +64,7 @@ start_process (void *file_name_)
   char *file_name = file_name_;
   struct intr_frame if_;
   struct thread* parent;
+  struct thread* cur=thread_current();
   bool success;
   parent=search_thread(thread_current()->sync.parent);
   /* Initialize interrupt frame and load executable. */
@@ -74,13 +77,14 @@ start_process (void *file_name_)
   palloc_free_page (file_name);
   if (!success)
   {
-      thread_current()->sync.exit_status=-1;
-      //parent->sync.exit_status=-1;
-      sema_up(&(thread_current()->sync.exec));
+      cur->sync.exit_status=-1;
+      sema_up(&(cur->sync.exec));
       thread_exit ();
   }
   else
-      sema_up(&(thread_current()->sync.exec));
+  {
+      sema_up(&(cur->sync.exec));
+  }
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
      threads/intr-stubs.S).  Because intr_exit takes all of its
@@ -145,13 +149,31 @@ process_exit (void)
   char* save_ptr;
   enum intr_level old_level;
   struct list_elem *e;
+  struct list_elem *pop;
   struct thread *undead;
+  struct file_data* cur_file;
   parent=search_thread(cur->sync.parent);
   sema_up(&(cur->sync.wait));//parent should wait until child exit(unlock here)
   token=strtok_r(cur->name," \t\n",&save_ptr);
   printf("%s: exit(%d)\n",token,cur->sync.exit_status);
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
+/*  old_level = intr_disable ();
+  if(!list_empty(&(cur->sync.file_list)))
+  {
+      e=list_begin(&(cur->sync.file_list));
+      while(e!=NULL)
+      {
+          e=list_next(e);
+          pop=list_pop_front(&cur->sync.file_list);
+          
+          cur_file=list_entry(e,struct file_data,elem);
+          if(cur_file->file!=NULL)
+          //    file_close(cur_file->file);
+          free(cur_file);
+      }
+  }
+  intr_set_level (old_level);*/
   pd = cur->pagedir;
   if (pd != NULL) 
     {
@@ -178,6 +200,7 @@ process_exit (void)
       }
   }
   intr_set_level (old_level);
+
   sema_down(&(cur->sync.exit));//child should wait until parent takes it's exit_status(lock here)
 }
 
@@ -298,6 +321,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
   token=strtok_r(temp," \t\n",&save_ptr);
   strlcpy(fn_exe,token,strlen(token)+1);
   file = filesys_open (fn_exe);
+  /*Add file to cur thread exec_file*/
   if (file == NULL) 
     {
       printf ("load: %s: open failed\n", file_name);
