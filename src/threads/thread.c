@@ -307,8 +307,6 @@ thread_exit (void)
   ASSERT (!intr_context ());
 
 #ifdef USERPROG
-/*  if(cur->sync.exit_status==-1)
-      PANIC("HELLO!\n");*/
   process_exit ();
 #endif
 

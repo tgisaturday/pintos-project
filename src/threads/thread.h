@@ -104,8 +104,8 @@ struct file_data
 };
 
 struct lock file_rw;
-
 #endif
+
 struct thread
   {
 #ifdef USERPROG
