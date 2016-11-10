@@ -13,8 +13,14 @@
 #include "threads/vaddr.h"
 #include "threads/malloc.h"
 #include "filesys/file.h"
+
 #ifdef USERPROG
 #include "userprog/process.h"
+#endif
+
+#ifndef USEPROG
+/*Inline function lib for fixed-point read arithmetic*/
+#include "threads/fixed-point.h"
 #endif
 
 /* Random value for struct thread's `magic' member.
@@ -56,6 +62,11 @@ static long long user_ticks;    /* # of timer ticks in user programs. */
 #define TIME_SLICE 4            /* # of timer ticks to give each thread. */
 static unsigned thread_ticks;   /* # of timer ticks since last yield. */
 
+#ifndef USERPROG
+/*Project1 Thread*/
+bool thread_prior_aging;
+#endif
+
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
    Controlled by kernel command-line option "-o mlfqs". */
@@ -94,7 +105,7 @@ thread_init (void)
   lock_init (&tid_lock);
   list_init (&ready_list);
   list_init (&all_list);
-
+  list_init (&sleep_list);
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();
   init_thread (initial_thread, "main", PRI_DEFAULT);
@@ -112,6 +123,12 @@ thread_start (void)
   struct semaphore start_idle;
   
   cur=thread_current();
+#ifndef USERPROG
+ // cur->donation_level=0;
+ // cur->locker=NULL;
+//  list_init(&cur->holding_locks);
+#endif
+
 #ifdef USERPROG
   cur->sync.exit_status=0;
   list_init(&(cur->sync.child_list));
@@ -153,8 +170,27 @@ thread_tick (void)
   /* Enforce preemption. */
   if (++thread_ticks >= TIME_SLICE)
     intr_yield_on_return ();
+#ifndef USERPROG
+  if(thread_prior_aging == true)
+      thread_aging();
+#endif
 }
-
+void thread_aging()
+{
+    struct list_elem *e;
+    struct thread* cur;
+    if(!list_empty(&ready_list))
+    {
+        e=list_front(&ready_list);
+        while(e!=list_end(&ready_list))
+        {
+            cur=list_entry(e,struct thread,elem);
+            if(cur!=idle_thread)
+                cur->priority++;
+            e=e->next;
+        }
+    }
+}
 /* Prints thread statistics. */
 void
 thread_print_stats (void) 
@@ -188,7 +224,6 @@ thread_create (const char *name, int priority,
   struct switch_threads_frame *sf;
   tid_t tid;
   enum intr_level old_level;
-
   ASSERT (function != NULL);
   /* Allocate thread. */
   t = palloc_get_page (PAL_ZERO);
@@ -224,6 +259,15 @@ thread_create (const char *name, int priority,
 
   /* Add to run queue. */
   thread_unblock (t);
+
+  /* Priority Scheduler */
+#ifndef USERPROG
+  if(thread_mlfqs==false)
+  {
+      if(priority > thread_current()->priority)
+          thread_yield();
+  }
+#endif
   return tid;
 }
 
@@ -260,9 +304,19 @@ thread_unblock (struct thread *t)
 
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
-  list_push_back (&ready_list, &t->elem);
+#ifdef USERPROG
+  list_push_back(&ready_list,&t->elem);
+#endif
+
+#ifndef USERPROG
+  if(thread_mlfqs==false)
+  {
+      list_insert_ordered(&ready_list,&t->elem,priority_first_sort,NULL);
+  }
+#endif
   t->status = THREAD_READY;
   intr_set_level (old_level);
+
 }
 
 /* Returns the name of the running thread. */
@@ -332,8 +386,17 @@ thread_yield (void)
   ASSERT (!intr_context ());
 
   old_level = intr_disable ();
-  if (cur != idle_thread) 
-    list_push_back (&ready_list, &cur->elem);
+#ifndef USERPROG
+  if(thread_mlfqs==false)
+  {
+      if (cur != idle_thread)
+          list_insert_ordered (&ready_list, &cur->elem,priority_first_sort,NULL);
+  }
+#endif
+#ifdef USERPROG
+  if (cur != idle_thread)
+      list_push_back (&ready_list, &cur->elem);
+#endif
   cur->status = THREAD_READY;
   schedule ();
   intr_set_level (old_level);
@@ -361,6 +424,10 @@ void
 thread_set_priority (int new_priority) 
 {
   thread_current ()->priority = new_priority;
+  if(thread_mlfqs==false)
+          if(!list_empty(&ready_list))
+              if(thread_current()->priority < list_entry(list_front(&ready_list),struct thread,elem)->priority)
+                  thread_yield();
 }
 
 /* Returns the current thread's priority. */
@@ -400,7 +467,7 @@ thread_get_recent_cpu (void)
   /* Not yet implemented. */
   return 0;
 }
-
+
 /* Idle thread.  Executes when no other thread is ready to run.
 
    The idle thread is initially put on the ready list by
@@ -449,7 +516,7 @@ kernel_thread (thread_func *function, void *aux)
   function (aux);       /* Execute the thread function. */
   thread_exit ();       /* If function() returns, kill the thread. */
 }
-
+
 /* Returns the running thread. */
 struct thread *
 running_thread (void) 
@@ -486,6 +553,12 @@ init_thread (struct thread *t, const char *name, int priority)
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
   t->magic = THREAD_MAGIC;
+#ifndef USERPROG
+  //t->donation_level=0;
+ // t->locker=NULL;
+ // list_init(&t->holding_locks);
+//  t->start_ticks=kernel_ticks;
+#endif
 #ifdef USERPROG
   t->sync.exit_status=0;
   list_init(&(t->sync.child_list));
@@ -520,10 +593,18 @@ alloc_frame (struct thread *t, size_t size)
 static struct thread *
 next_thread_to_run (void) 
 {
-  if (list_empty (&ready_list))
-    return idle_thread;
-  else
-    return list_entry (list_pop_front (&ready_list), struct thread, elem);
+    if (list_empty (&ready_list))
+        return idle_thread;
+    else
+    {
+#ifndef USERPROG
+        if(thread_mlfqs==false)
+        {
+            list_sort(&ready_list,priority_first_sort,NULL);
+        }
+#endif
+        return list_entry (list_pop_front (&ready_list), struct thread, elem);
+    }
 }
 
 /* Completes a thread switch by activating the new thread's page
@@ -612,6 +693,25 @@ allocate_tid (void)
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);
+#ifndef USERPROG
+bool
+priority_first_sort (const struct list_elem *x, const struct list_elem *y, void *aux UNUSED)
+{
+    const struct thread* a=list_entry(x,struct thread,elem);
+    const struct thread* b=list_entry(y,struct thread,elem);
+
+    return a->priority > b->priority;
+}
+bool
+priority_sort_lock(const struct list_elem *x, const struct list_elem *y, void *aux UNUSED)
+{
+    const struct lock* a=list_entry(x,struct lock,elem);
+    const struct lock* b=list_entry(y,struct lock,elem);
+
+    return a->holder->priority > b->holder->priority;
+}
+#endif
+
 #ifdef USERPROG
 /*Search for thread using tid*/
 struct thread* search_thread(tid_t tid)
