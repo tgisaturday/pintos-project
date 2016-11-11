@@ -17,6 +17,7 @@
 #include "threads/palloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "threads/malloc.h"
 #define COMMAND_LINE 128
 
 static thread_func start_process NO_RETURN;
@@ -30,6 +31,7 @@ process_execute (const char *file_name)
 {
   char *fn_copy;
   struct thread *child;
+  struct thread *cur=thread_current();
   tid_t tid;
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
@@ -43,8 +45,9 @@ process_execute (const char *file_name)
   if(tid!=TID_ERROR)
   {
       child=search_thread(tid);
+      cur=thread_current();
       child->sync.parent=thread_current()->tid;
-      list_push_back(&(thread_current()->sync.child_list),&(child->sync.elem));
+      list_push_back(&(cur->sync.child_list),&(child->sync.elem));
       //thread push (child)
   }
   if (tid == TID_ERROR)
@@ -59,20 +62,28 @@ start_process (void *file_name_)
 {
   char *file_name = file_name_;
   struct intr_frame if_;
+  struct thread* parent;
+  struct thread* cur=thread_current();
   bool success;
-
+  parent=search_thread(thread_current()->sync.parent);
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
   success = load (file_name, &if_.eip, &if_.esp);
-
   /* If load failed, quit. */
   palloc_free_page (file_name);
-  if (!success) 
-    thread_exit ();
-
+  if (!success)
+  {
+      cur->sync.exit_status=-1;
+      sema_up(&(cur->sync.exec));
+      thread_exit ();
+  }
+  else
+  {
+      sema_up(&(cur->sync.exec));
+  }
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
      threads/intr-stubs.S).  Because intr_exit takes all of its
@@ -96,24 +107,34 @@ int
 process_wait (tid_t child_tid) 
 {
     struct thread* child;
-
+    struct thread* cur;
+    int exit;
+    cur=thread_current();
     child=search_thread(child_tid);
+    int old_level = intr_disable();
+  
     //1. check if tid is really thread_current()'s child
-    if(is_child(child_tid)==NULL)
-        return -1;
-    else if(search_thread(child_tid)==NULL)
-        return -1;
-    //2. no double waiting
-    if(child->sync.exit_status==-1)
+    if(search_thread(child_tid)==NULL)
     {
-        list_remove(&child->sync.elem);
-        sema_up(&(child->sync.wait));
-        return child->sync.exit_status;    
+        exit=-1;
+        intr_set_level(old_level);
     }
-    sema_down(&(thread_current()->sync.wait));
-    list_remove(&child->sync.elem);
-    sema_up(&(child->sync.wait));
-    return child->sync.exit_status;
+    else if(is_child(child_tid)==NULL)
+    {
+        exit=-1;
+        intr_set_level(old_level);
+    }
+    else
+    {
+        intr_set_level(old_level);
+        sema_down(&(child->sync.wait));//parent should wait until child exit(lock here)
+        exit=child->sync.exit_status;
+        if(!list_empty(&(cur->sync.child_list)))
+            list_remove(&(child->sync.elem));//if not empty
+        sema_up(&(child->sync.exit));//child should wait until parent takes it's exit_status(unlock here)
+    }
+
+    return exit;
 }
 
 /* Free the current process's resources. */
@@ -125,8 +146,31 @@ process_exit (void)
   uint32_t *pd;
   char* token;
   char* save_ptr;
+  enum intr_level old_level;
+  struct list_elem *e;
+  struct thread *undead;
+  struct file_data* cur_file;
   parent=search_thread(cur->sync.parent);
-
+  lock_acquire(&file_rw);
+  if(cur->sync.exec_file!=NULL)
+  {
+      file_close(cur->sync.exec_file);
+  }
+  lock_release(&file_rw);
+  
+  lock_acquire(&file_rw);
+  while(!list_empty(&(cur->sync.file_list)))
+  {
+      e=list_pop_front(&cur->sync.file_list);
+      cur_file=list_entry(e,struct file_data,elem);
+      if(cur_file->file!=NULL)
+      {
+              file_close(cur_file->file);
+      }
+      free(cur_file);
+  }
+  lock_release(&file_rw);
+  sema_up(&(cur->sync.wait));//parent should wait until child exit(unlock here)
   token=strtok_r(cur->name," \t\n",&save_ptr);
   printf("%s: exit(%d)\n",token,cur->sync.exit_status);
   /* Destroy the current process's page directory and switch back
@@ -145,17 +189,20 @@ process_exit (void)
       pagedir_activate (NULL);
       pagedir_destroy (pd);
     }
-  if(parent->tid!=-1)
+
+  old_level = intr_disable ();
+  if(!list_empty(&(cur->sync.child_list)))
   {
-      sema_up(&(parent->sync.wait));
-      if(cur->tid!=1)
+      for(e=list_begin(&(cur->sync.child_list));e!=list_end(&(cur->sync.child_list));e=list_next(e))
       {
-          sema_down(&(cur->sync.wait));
+          undead=list_entry(e,struct thread,sync.elem);
+          sema_up(&(undead->sync.exit));
+          list_remove(e);
       }
   }
-  else
-      sema_up(&(parent->sync.wait));
-  //child_block?
+  intr_set_level (old_level);
+
+  sema_down(&(cur->sync.exit));//child should wait until parent takes it's exit_status(lock here)
 }
 
 /* Sets up the CPU for running user code in the current
@@ -260,15 +307,13 @@ load (const char *file_name, void (**eip) (void), void **esp)
   int *argv[20];//argv pointer sets
   int argc;//argument counter
   char fn_copy[COMMAND_LINE];
-  //char test_name[128]="/bin/ls -l fo bar";
   int word_align=0;
   char fn_exe[COMMAND_LINE];
   char temp[COMMAND_LINE];
   int arglen=0;
-  struct thread* parent;
   /* Allocate and activate page directory. */
   t->pagedir = pagedir_create ();
-  if (t->pagedir == NULL) 
+  if (t->pagedir == NULL)
     goto done;
   process_activate ();
   /* Open executable file.*/
@@ -279,7 +324,6 @@ load (const char *file_name, void (**eip) (void), void **esp)
   if (file == NULL) 
     {
       printf ("load: %s: open failed\n", file_name);
-      thread_current()->sync.exit_status=-1;
       goto done; 
     }
   /* Read and verify executable header. */
@@ -363,14 +407,12 @@ load (const char *file_name, void (**eip) (void), void **esp)
   token=NULL;
   save_ptr=NULL;
   word_align=0;
-  //printf("PHYS_BASE: %d\n",(int)esp);//FOR DEBUG: DON'T FORGET TO ERASE
   for(token=strtok_r(fn_copy," \n\t",&save_ptr);token!=NULL;token=strtok_r(NULL," \n\t",&save_ptr))
   {
       arglen=strlen(token)+1;
       *esp=(void*)((uintptr_t)*esp-arglen);//move ESP
       word_align+=arglen;
       strlcpy((char*)*esp,token,arglen);
-      //printf("ESP: %d argv[]: %s\n",(int)*esp,(char*)*esp);//FOR DEBUG: DON'T FORGET TO ERASE
       argv[argc]=(int*)*esp;
       argc++;
   }//(type: char*)
@@ -381,7 +423,6 @@ load (const char *file_name, void (**eip) (void), void **esp)
       {
           *esp=(void*)((uintptr_t)*esp-1);//move ESP
           *(uint8_t*)*esp=0;//word_align PUSH
-          //printf("ESP: %d word_align: %u\n",(int)*esp,*(uint8_t*)*esp);//FOR DEBUG: DON'T FORGET TO ERASE
       }
   }
   /*In STACK, arguments are not in right-to-left order. While pushing argv[], consider the order(right to left)*/
@@ -389,19 +430,13 @@ load (const char *file_name, void (**eip) (void), void **esp)
   {
       *esp=(void*)((uintptr_t)*esp-4);//move ESP
       *(int**)*esp=argv[i];
-      //printf("ESP: %d argv[%d]: %d\n",(int)*esp,i,*(int*)*esp);//FOR DEBUG: DON'T FORGET TO ERASE
   }//argv[] PUSH(type:char *)
   *esp=(void*)((uintptr_t)*esp-4);//move ESP
   *(char***)*esp=(char**)((int)*esp+4);//argv PUSH(type: char**)
-  //printf("ESP: %d argv: %d\n",(int)*esp,*(int*)*esp);//FOR DEBUG: DON'T FORGET TO ERASE
   *esp=(void*)((uintptr_t)*esp-4);//move ESP
   *(int*)*esp=argc;//argc PUSH(type: int)
-  //printf("ESP: %d argc: %d\n",(int)*esp,*(int*)*esp);//FOR DEBUG: DON'T FORGET TO ERASE
   *esp=(void*)((uintptr_t)*esp-4);//move ESP
-  //printf("ESP: %d\n",(int)*esp);//FOR DEBUG: DON'T FORGET TO ERASE
   *(void**)*esp=(void(*)())0;//fake return address PUSH which is C standard
-  //hex_dump((int)*esp,*esp,64,true);//FOR DEBUG: DON'T FORGET TO ERASE
-  //printf("\n-------------------------------------------\n");//FOR DEBUG: DON'T FORGET TO ERASE
 
   /* Start address. */
   *eip = (void (*) (void)) ehdr.e_entry;
@@ -410,11 +445,18 @@ load (const char *file_name, void (**eip) (void), void **esp)
 
  done:
   /* We arrive here whether the load is successful or not. */
-  parent=search_thread(thread_current()->sync.parent);
   file_close (file);
-  if(thread_current()->sync.exit_status==-1)
+  if(success==true)
   {
-      thread_exit();
+      lock_acquire(&file_rw);
+      t->sync.exec_file=filesys_open(fn_exe);//Added for deny_writes to executable
+      if(t->sync.exec_file!=NULL)
+          file_deny_write(t->sync.exec_file);
+      lock_release(&file_rw);
+  }
+  else if(t->sync.exec_file!=NULL)
+  {   
+      t->sync.exec_file=NULL;
   }
   return success;
 }

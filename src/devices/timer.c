@@ -90,12 +90,54 @@ void
 timer_sleep (int64_t ticks) 
 {
   int64_t start = timer_ticks ();
+#ifndef USERPROG
+  enum intr_level old_level;
+  struct thread *t = thread_current();
 
+  old_level=intr_disable();
+  t->sleep_ticks = start+ticks;
+  list_push_back(&sleep_list,&t->elem);
+  thread_block();
+  intr_set_level(old_level);
+#endif
+#ifdef USERPROG
+/* original busy waiting timer sleep */
   ASSERT (intr_get_level () == INTR_ON);
   while (timer_elapsed (start) < ticks) 
     thread_yield ();
-}
+#endif
 
+}
+#ifndef USERPROG
+/* Check for thread that should be waken up in this tick */
+void
+thread_wake_up(int64_t ticks)
+{
+    struct thread *wake_up;
+    struct list_elem *e;
+    struct list_elem *temp;
+    enum intr_level old_level;
+
+    if(!list_empty(&sleep_list))
+    {
+        old_level=intr_disable();
+        for(e=list_begin(&sleep_list);e!=list_end(&sleep_list);)
+        {
+            wake_up=list_entry(e,struct thread,elem);
+            if(ticks >= wake_up->sleep_ticks)
+            {
+                temp=e;
+                e=list_next(temp);
+                list_remove(temp);
+                thread_unblock(wake_up);
+            }
+            else
+                e=list_next(e);
+        }
+        intr_set_level(old_level);
+    }
+}
+#endif
 /* Sleeps for approximately MS milliseconds.  Interrupts must be
    turned on. */
 void
@@ -165,12 +207,16 @@ timer_print_stats (void)
 {
   printf ("Timer: %"PRId64" ticks\n", timer_ticks ());
 }
-
+
 /* Timer interrupt handler. */
 static void
 timer_interrupt (struct intr_frame *args UNUSED)
 {
   ticks++;
+#ifndef USERPROG
+  /*Project1 Thread*/
+  thread_wake_up(ticks);
+#endif
   thread_tick ();
 }
 

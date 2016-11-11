@@ -23,7 +23,10 @@ void timer_nsleep (int64_t nanoseconds);
 void timer_mdelay (int64_t milliseconds);
 void timer_udelay (int64_t microseconds);
 void timer_ndelay (int64_t nanoseconds);
-
+#ifndef USERPROG
+/* Thread wake up */
+void thread_wake_up(int64_t ticks);
+#endif
 void timer_print_stats (void);
 
 #endif /* devices/timer.h */
