@@ -108,6 +108,7 @@ timer_sleep (int64_t ticks)
 #endif
 
 }
+#ifndef USERPROG
 /* Check for thread that should be waken up in this tick */
 void
 thread_wake_up(int64_t ticks)
@@ -136,6 +137,7 @@ thread_wake_up(int64_t ticks)
         intr_set_level(old_level);
     }
 }
+#endif
 /* Sleeps for approximately MS milliseconds.  Interrupts must be
    turned on. */
 void
