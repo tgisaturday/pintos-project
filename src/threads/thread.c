@@ -176,13 +176,13 @@ thread_tick (void)
           t->recent_cpu+=int_to_fix(1);
       if(timer_ticks() % TIMER_FREQ==0)
       {  
+          mlfqs_load_avg_calculation();
           for(e=list_begin(&all_list);e!=list_end(&all_list);e=e->next)
           {
               cur=list_entry(e,struct thread,allelem);
               if(cur!=idle_thread)
                   mlfqs_recent_cpu_calculation(cur);
           }
-          mlfqs_load_avg_calculation();
       }
       if(timer_ticks() % 4==0)
       {

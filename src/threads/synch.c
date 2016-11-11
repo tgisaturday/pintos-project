@@ -131,10 +131,6 @@ sema_up (struct semaphore *sema)
       thread_unblock(released);
   }
 #endif
-#ifndef USERPROG
-  if(!list_empty(&sema->waiters))
-      list_sort(&sema->waiters,priority_first_sort,NULL);
-#endif
   sema->value++;
   intr_set_level (old_level);
 #ifndef USERPROG
