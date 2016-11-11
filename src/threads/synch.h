@@ -29,10 +29,7 @@ void lock_acquire (struct lock *);
 bool lock_try_acquire (struct lock *);
 void lock_release (struct lock *);
 bool lock_held_by_current_thread (const struct lock *);
-#ifndef USERPROG
-void priority_donation(struct lock* cur_lock);
-void priority_recall(struct lock* cur_lock);
-#endif
+
 /* Condition variable. */
 struct condition 
   {

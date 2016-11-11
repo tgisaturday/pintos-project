@@ -123,12 +123,8 @@ struct thread
     int priority;                       /* Priority. */
 #ifndef USERPROG
     int64_t sleep_ticks;                 /* ticks to wait until wake_up */
-   // int start_ticks;
-   // struct lock* locker;
-   // int donation_level;                  /* level of priority donation */
-   // struct list holding_locks;
-   // int original_priority;
-
+    int nice;
+    int recent_cpu;
 #endif 
     struct list_elem allelem;           /* List element for all threads list. */
     /* Shared between thread.c and synch.c. */
@@ -182,10 +178,16 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
+
+int mlfqs_highest_priority(void);
+int mlfqs_priority_calculation(struct thread* t);
+int mlfqs_recent_cpu_calculation(struct thread* t);
+int mlfqs_load_avg_calculation(void);
+void mlfqs_recalculation_on_ticks(void);
 #ifndef USERPROG
 bool priority_first_sort (const struct list_elem *x, const struct list_elem *y, void *aux UNUSED);
-bool priority_sort_lock(const struct list_elem *x, const struct list_elem *y, void *aux UNUSED);
 #endif
+
 #ifdef USERPROG
 struct thread* search_thread (tid_t tid);
 struct thread* is_child(tid_t child_tid);

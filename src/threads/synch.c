@@ -73,13 +73,7 @@ sema_down (struct semaphore *sema)
 #endif
 
 #ifndef USERPROG
-      if(thread_mlfqs==false)
-      {
-          //should implement priority waiter insert using list_insert_ordered();
-          list_insert_ordered(&sema->waiters,&thread_current()->elem,priority_first_sort,NULL); 
-      }
-      else 
-          list_push_back (&sema->waiters, &thread_current ()->elem);
+      list_insert_ordered(&sema->waiters,&thread_current()->elem,priority_first_sort,NULL);
 #endif
       thread_block ();
     }
@@ -130,25 +124,22 @@ sema_up (struct semaphore *sema)
   if (!list_empty (&sema->waiters)) 
     thread_unblock (list_entry (list_pop_front (&sema->waiters),struct thread, elem));
 #endif
+
 #ifndef USERPROG
-  if(thread_mlfqs==false)
+  if (!list_empty (&sema->waiters)) 
   {
-      if (!list_empty (&sema->waiters)) 
-      {
-          released=list_entry (list_pop_front (&sema->waiters),struct thread, elem);
-          thread_unblock(released);
-      }
+      released=list_entry (list_pop_front (&sema->waiters),struct thread, elem);
+      thread_unblock(released);
   }
-#endif
   if(thread_mlfqs==false && !list_empty(&sema->waiters))
-      list_sort(&sema->waiters,priority_first_sort,NULL);
+      list_sort(&sema->waiters,priority_first_sort,NULL);  
+#endif
   sema->value++;
   intr_set_level (old_level);
-  if(thread_mlfqs==false)
-  {
-      if(released!=NULL && released->priority > thread_current()->priority)
-          thread_yield();
-  }
+#ifndef USERPROG  
+  if(thread_mlfqs==false && released!=NULL && released->priority > thread_current()->priority)
+      thread_yield();
+#endif
 }
 
 static void sema_test_helper (void *sema_);
@@ -226,26 +217,9 @@ lock_acquire (struct lock *lock)
   ASSERT (lock != NULL);
   ASSERT (!intr_context ());
   ASSERT (!lock_held_by_current_thread (lock));
-
-//  struct thread* cur=thread_current();
-#ifndef USERPROG
-/*  if(thread_mlfqs==false)
-  {
-      priority_donation(lock);
-      cur->locker=lock;
-  }*/
-#endif
-
+  
   sema_down (&lock->semaphore);
-#ifndef USERPROG
-//  if(thread_mlfqs==false)
-//      cur->locker=NULL;
-#endif
   lock->holder = thread_current ();
-#ifndef USERPROG
-//  if(thread_mlfqs==false)
-//      list_insert_ordered(&cur->holding_locks,&lock->elem,priority_sort_lock,NULL);
-#endif
 }
 
 
@@ -279,13 +253,7 @@ lock_release (struct lock *lock)
 {
   ASSERT (lock != NULL);
   ASSERT (lock_held_by_current_thread (lock));
-#ifndef USERPROG
-/*  if(thread_mlfqs==false)
-  {
-      list_remove(&lock->elem);
-      priority_recall(lock);
-  }*/
-#endif
+ 
   lock->holder = NULL;
   sema_up (&lock->semaphore);
 }
@@ -307,70 +275,6 @@ struct semaphore_elem
     struct list_elem elem;              /* List element. */
     struct semaphore semaphore;         /* This semaphore. */
   };
-#ifndef USERPROG
-/* priority donation while using lock */
-/*void priority_donation(struct lock* lock)
-{
-    struct thread* cur=thread_current();
-    struct thread* lock_holder=lock->holder;
-
-    if(lock == NULL)
-        return;
-    if(lock_holder == NULL)
-        return;
-    if(cur->priority <= lock_holder->priority)
-        return;
-    if(cur->donation_level==0)
-        cur->original_priority=cur->priority;
-    lock_holder->priority=cur->priority;
-    cur->donation_level++;
-    if(lock_holder->locker!=NULL)
-    {
-        priority_donation(lock_holder->locker);
-    }
-}
-*/
-/* priority donation recall while using lock */
-/*void priority_recall(struct lock* lock)
-{
-    struct thread* cur=thread_current();
-    struct lock* highest_lock;
-    struct thread* highest_waiter;
-    struct thread* highest_thread;
-    if(list_empty(&lock->semaphore.waiters))
-        return;
-    highest_thread=list_entry(list_front(&lock->semaphore.waiters),struct thread,elem);
-    if(cur->priority != highest_thread->priority)
-        return;
-    if(list_empty(&cur->holding_locks))
-    {
-        cur->priority=cur->original_priority;
-        cur->donation_level--;
-        return;
-    }
-    highest_lock=list_entry(list_front(&cur->holding_locks),struct lock,elem);
-    if(highest_lock!=NULL)
-    {
-        if(!list_empty(&highest_lock->semaphore.waiters))
-        {
-            highest_waiter=list_entry(list_front(&highest_lock->semaphore.waiters),struct thread,elem);
-            if(highest_waiter->priority > cur->original_priority)
-            {
-                cur->priority=highest_waiter->priority;
-                cur->donation_level--;
-            }
-
-        }
-        else
-        {
-            cur->priority=cur->original_priority;
-            cur->donation_level--;
-        }
-
-    }
-
-}*/
-#endif
 
 /* Initializes condition variable COND.  A condition variable
    allows one piece of code to signal a condition and cooperating
