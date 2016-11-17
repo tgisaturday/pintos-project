@@ -18,6 +18,10 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 #include "threads/malloc.h"
+
+#include "vm/page.h"
+#include "vm/frame.h"
+
 #define COMMAND_LINE 128
 
 static thread_func start_process NO_RETURN;
@@ -71,6 +75,10 @@ start_process (void *file_name_)
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
+#ifdef VM
+  frame_table_init(&(cur->frame_table));
+  suppage_table_init(&(cur->suppage_table));
+#endif
   success = load (file_name, &if_.eip, &if_.esp);
   /* If load failed, quit. */
   palloc_free_page (file_name);
@@ -200,6 +208,8 @@ process_exit (void)
           list_remove(e);
       }
   }
+  frame_table_destroy(&(cur->frame_table));
+  suppage_destroy(&(cur->suppage_table));
   intr_set_level (old_level);
 
   sema_down(&(cur->sync.exit));//child should wait until parent takes it's exit_status(lock here)
@@ -402,7 +412,6 @@ load (const char *file_name, void (**eip) (void), void **esp)
 
   /*Argument Parsing and add arguments to STACK*/
   strlcpy(fn_copy,file_name,strlen(file_name)+1);
-  //strlcpy(fn_copy,test_name,strlen(test_name)+1);
   argc=0;
   token=NULL;
   save_ptr=NULL;
@@ -541,14 +550,24 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
       /* Get a page of memory. */
+#ifndef VM
       uint8_t *knpage = palloc_get_page (PAL_USER);
+#endif
+#ifdef VM
+      uint8_t *knpage = frame_get_page (&thread_current()->frame_table,upage, PAL_USER);
+#endif
       if (knpage == NULL)
         return false;
 
       /* Load this page. */
       if (file_read (file, knpage, page_read_bytes) != (int) page_read_bytes)
         {
+#ifndef VM
           palloc_free_page (knpage);
+#endif
+#ifdef VM
+          frame_free_page (&thread_current()->frame_table,upage);
+#endif
           return false; 
         }
       memset (knpage + page_read_bytes, 0, page_zero_bytes);
@@ -556,7 +575,12 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       /* Add the page to the process's address space. */
       if (!install_page (upage, knpage, writable)) 
         {
+#ifndef VM
           palloc_free_page (knpage);
+#endif
+#ifdef VM
+          frame_free_page(&thread_current()->frame_table,upage);
+#endif
           return false; 
         }
 
@@ -575,15 +599,24 @@ setup_stack (void **esp)
 {
   uint8_t *kpage;
   bool success = false;
-
+#ifndef VM
   kpage = palloc_get_page (PAL_USER | PAL_ZERO);
+#endif
+#ifdef VM
+  kpage = frame_get_page (&thread_current()->frame_table,(uint8_t*)PHYS_BASE - PGSIZE, PAL_USER | PAL_ZERO);
+#endif
   if (kpage != NULL) 
     {
       success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
       if (success)
         *esp = PHYS_BASE;
       else
-        palloc_free_page (kpage);
+#ifndef VM
+          palloc_free_page (kpage);
+#endif
+#ifdef VM
+          frame_free_page (&thread_current()->frame_table,((uint8_t*) PHYS_BASE) - PGSIZE);
+#endif
     }
   return success;
 }

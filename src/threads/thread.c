@@ -13,7 +13,8 @@
 #include "threads/vaddr.h"
 #include "threads/malloc.h"
 #include "filesys/file.h"
-
+#include "vm/frame.h"
+#include "vm/page.h"
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
@@ -107,6 +108,11 @@ thread_init (void)
   list_init (&ready_list);
   list_init (&all_list);
   list_init (&sleep_list);
+#ifdef VM
+  list_init (&frame_alllist);
+  lock_init (&frame_lock);
+  lock_init (&page_lock);
+#endif
   load_average=0;
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();

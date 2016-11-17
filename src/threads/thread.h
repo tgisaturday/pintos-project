@@ -3,9 +3,9 @@
 
 #include <debug.h>
 #include <list.h>
+#include <hash.h>
 #include <stdint.h>
 #include "synch.h"
-
 #ifndef USERPROG
 /*Project1 Thread*/
 extern bool thread_prior_aging;
@@ -133,8 +133,9 @@ struct thread
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
-
 #endif
+    struct hash frame_table;
+    struct hash suppage_table;
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
