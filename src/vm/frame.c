@@ -23,7 +23,7 @@
 static int used_frame_pool = 0;
 static struct frame_entry fr_entry[FR_POOL_SIZE];
 
-uint8_t* frame_get_page(struct hash* frame_table,uint8_t* upage, enum palloc_flags pal_flags)
+uint8_t* frame_get_page(struct hash* frame_table,uint8_t* upage, enum palloc_flags pal_flags,bool writable)
 {
     lock_acquire(&frame_lock);
     uint8_t* frame=(uint8_t*)palloc_get_page(pal_flags);
@@ -32,12 +32,19 @@ uint8_t* frame_get_page(struct hash* frame_table,uint8_t* upage, enum palloc_fla
     {
         new_entry=&fr_entry[used_frame_pool];
         used_frame_pool++;
+
+        lock_acquire(&(thread_current()->page_lock));
+        new_entry->pagedir=thread_current()->pagedir;
         new_entry->kaddr=frame;
         new_entry->uaddr=upage;
+        new_entry->pinned=false;
+        new_entry->writable=writable;
         new_entry->alloc_to=thread_current();
         hash_insert(frame_table,&new_entry->elem);
         list_push_back(&frame_alllist,&new_entry->evict_elem);
-        new_entry->pagedir=thread_current()->pagedir;
+        pagedir_set_page(new_entry->pagedir,new_entry->uaddr,new_entry->kaddr,new_entry->writable);
+        lock_release(&(thread_current()->page_lock));
+
         lock_release(&frame_lock);
         return frame;
     }
@@ -54,9 +61,11 @@ void frame_free_page(struct hash* frame_table,uint8_t* upage)
     frm=find_frame(frame_table,upage);
     if(frm != NULL)
     {
+        lock_acquire(&(thread_current()->page_lock));
         list_remove(&frm->evict_elem);
         hash_delete(frame_table,&frm->elem);
         palloc_free_page(frm->kaddr);
+        lock_release(&(thread_current()->page_lock));
     }
     lock_release(&frame_lock);
 }

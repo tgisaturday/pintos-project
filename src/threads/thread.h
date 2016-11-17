@@ -106,8 +106,16 @@ struct file_data
     struct file* file;
     struct list_elem elem;
 };
-
+struct mmap_entry
+{
+    int md;
+    struct file* file;
+    uint8_t *upage;
+    int length;
+    struct list_elem elem;
+};
 struct lock file_rw;
+struct lock mmap_lock;
 #endif
 int64_t load_average;
 
@@ -122,6 +130,9 @@ struct thread
     char name[16];                      /* Name (for debugging purposes). */
     uint8_t *stack;                     /* Saved stack pointer. */
     int priority;                       /* Priority. */
+    struct list mmap_list;
+    int md_gen;
+    struct lock page_lock;
 #ifndef USERPROG
     int64_t sleep_ticks;                 /* ticks to wait until wake_up */
     int nice;

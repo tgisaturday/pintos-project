@@ -21,7 +21,7 @@
 static int used_suppage_pool = 0;
 static struct suppage_entry sp_entry[SP_POOL_SIZE];
 
-void suppage_insert(struct hash* suppage_table,uint8_t* upage, struct file *swap_file,size_t offset, size_t length)
+void suppage_insert(struct hash* suppage_table,uint8_t* upage, struct file *swap_file,size_t offset, size_t length,bool is_segment,bool writable)
 {
     struct suppage_entry* new_entry;
     lock_acquire(&page_lock);
@@ -32,6 +32,9 @@ void suppage_insert(struct hash* suppage_table,uint8_t* upage, struct file *swap
     new_entry->swap_file=swap_file;
     new_entry->offset=offset;
     new_entry->length=length;
+    new_entry->is_mmap=(is_segment ? false:(swap_file!=NULL));
+    new_entry->is_segment=is_segment;
+    new_entry->writable=writable;
     lock_release(&page_lock);
 }
 void suppage_remove(struct hash* suppage_table, uint8_t *upage)

@@ -112,6 +112,7 @@ thread_init (void)
   list_init (&frame_alllist);
   lock_init (&frame_lock);
   lock_init (&page_lock);
+  lock_init (&mmap_lock);
 #endif
   load_average=0;
   /* Set up a thread structure for the running thread. */
@@ -140,8 +141,11 @@ thread_start (void)
   sema_init(&(cur->sync.exit),0);
   lock_init(&(file_rw));
   lock_init(&(cur->sync.fd_lock));
+  lock_init(&(cur->page_lock));
   cur->sync.fd_gen=2;
   list_init(&(cur->sync.file_list));
+  list_init(&(cur->mmap_list));
+  cur->md_gen=0;
 #endif
   sema_init (&start_idle, 0);
   thread_create ("idle", PRI_MIN, idle, &start_idle);
@@ -654,8 +658,11 @@ init_thread (struct thread *t, const char *name, int priority)
   sema_init(&(t->sync.exec),0);
   sema_init(&(t->sync.exit),0);
   lock_init(&(t->sync.fd_lock));
+  lock_init(&(t->page_lock));
   t->sync.fd_gen=2;
   list_init(&(t->sync.file_list));
+  list_init(&(t->mmap_list));
+  t->md_gen=0;
 #endif
   list_push_back (&all_list, &t->allelem);
 }

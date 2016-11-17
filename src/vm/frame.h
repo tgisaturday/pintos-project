@@ -13,6 +13,9 @@ struct frame_entry
     uint32_t *pagedir;
 
     struct thread* alloc_to;
+    bool writable;
+    bool pinned;
+
     struct hash_elem elem;
     struct list_elem evict_elem;
 };
@@ -20,7 +23,7 @@ struct frame_entry
 struct lock frame_lock;
 
 struct list frame_alllist;
-uint8_t* frame_get_page(struct hash* frame_table,uint8_t* upage, enum palloc_flags pal_flags );
+uint8_t* frame_get_page(struct hash* frame_table,uint8_t* upage, enum palloc_flags pal_flagsi,bool writable );
 void frame_free_page(struct hash* frame_table,uint8_t* upage);
 void frame_table_destroy(struct hash* frame_table);
 struct frame_entry* find_frame(struct hash* frame_table,uint8_t* upage);

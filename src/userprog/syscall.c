@@ -12,9 +12,12 @@
 #include "filesys/filesys.h"
 #include "filesys/file.h"
 #include <string.h>
+#include "vm/page.h"
+#include "vm/frame.h"
+#include "vm/swap.h"
 static void syscall_handler (struct intr_frame *);
 
-
+#define STACK_SIZE_LIMIT (uint8_t*)((uint8_t*)(PHYS_BASE) - (uint8_t*)(8*1024*1024))
 void
 syscall_init (void) 
 {
@@ -47,6 +50,117 @@ void get_argument(void *esp, void **arg, int count)
         arg[i]=esp;
         esp=(void*)((uintptr_t)esp+4);
     }
+}
+int mmap(struct file *map_file, uint8_t* upage)
+{
+    lock_acquire(&mmap_lock);
+    int mmap_length=file_length(map_file);
+    int mmap_page_num=(mmap_length + PGSIZE -1) / PGSIZE;
+    /* if not page-alligned */
+    if((unsigned)upage != ((unsigned)upage / PGSIZE) * PGSIZE || upage + mmap_page_num * PGSIZE >= (uint8_t*)PHYS_BASE)
+    {
+        lock_release(&mmap_lock);
+        return -1;
+    }
+    /* if in STACK */
+    if(STACK_SIZE_LIMIT <= upage && upage + mmap_page_num * PGSIZE >= (uint8_t*)PHYS_BASE)
+    {
+        lock_release(&mmap_lock);
+        return -1;
+    }
+    int mmap_left=mmap_length;
+    int offset = 0;
+    uint8_t *upage_cur=upage;
+    struct file* file_cur=map_file;
+
+    /* if zero-sized file */
+    if(mmap_page_num < 1 || mmap_length < 1)
+    {
+        lock_release(&mmap_lock);
+        return -1;
+    }
+
+    int old_offset=file_tell(file_cur);
+
+    /* if page is already assigned */
+    int i;
+    for(i=0;i<mmap_page_num;i++)
+    {
+        if(suppage_find(&thread_current()->suppage_table, upage + PGSIZE*i))
+        {
+            lock_release(&mmap_lock);
+            return -1;
+        }
+    }
+
+    /* add to suppage. mmap loading is lazy. */
+    while(mmap_left > 0)
+    {
+        suppage_insert(&thread_current()->suppage_table,upage_cur,file_cur,offset,mmap_left >= PGSIZE ? PGSIZE : mmap_left,false,true);
+        mmap_left-=PGSIZE;
+        upage_cur+=PGSIZE;
+        offset+=PGSIZE;
+    }
+    file_seek(file_cur,old_offset);
+
+    struct mmap_entry* new_mmap = (struct mmap_entry*)malloc(sizeof(struct mmap_entry));
+    new_mmap->md=thread_current()->md_gen;
+    thread_current()->md_gen++;
+    new_mmap->file=file_cur;
+    new_mmap->upage=upage;
+    new_mmap->length=mmap_length;
+    list_push_back(&thread_current()->mmap_list,&new_mmap->elem);
+    
+    lock_release(&mmap_lock);
+    return new_mmap->md;
+
+}
+void munmap(int md)
+{
+    lock_acquire(&mmap_lock);
+    struct list_elem *e;
+    struct mmap_entry* mmap_temp;
+    struct mmap_entry* mmap=NULL;
+    if(list_empty(&thread_current()->mmap_list))
+    {
+        lock_release(&mmap_lock);
+        return;
+    }
+    for(e=list_begin(&thread_current()->mmap_list);e!=list_end(&thread_current()->mmap_list);e=list_next(e))
+    {
+        mmap_temp=list_entry(e,struct mmap_entry,elem);
+        if(mmap_temp->md==md)
+        {
+            mmap=mmap_temp;
+            break;
+        }
+    }
+    if(mmap==NULL)
+    {
+        lock_release(&mmap_lock);
+        return;
+    }
+    list_remove(e);
+
+    int offset=0;
+    int old_offset=file_tell(mmap->file);
+    int mmap_left=mmap->length;
+    uint8_t *upage_cur=mmap->upage;
+
+    lock_acquire(&file_rw);
+    while(mmap_left > 0)
+    {
+        check_address((void*)upage_cur);
+        file_write_at(mmap->file, upage_cur, mmap_left < PGSIZE ? mmap_left : PGSIZE, offset);
+        mmap_left-=PGSIZE;
+        upage_cur+=PGSIZE;
+        offset+=PGSIZE;
+    }
+    file_seek(mmap->file,old_offset);
+    lock_release(&file_rw);
+
+    free(mmap);
+    lock_release(&mmap_lock);
 }
 int pibonacci(int n)
 {
@@ -272,18 +386,22 @@ syscall_handler (struct intr_frame *f UNUSED)
           lock_release(&(file_rw));
           break;
       case SYS_MMAP:
+          get_argument(esp,arg,2);
+          for(i=0;i<2;i++)
+              check_address(arg[i]);
+          check_address(*(void**)arg[1]);
+          new_file=search_file(*(int*)arg[0]);
+          if(new_file!=NULL && *(int*)arg[0] > 1)
+          {
+              f->eax=mmap(new_file,*(uint8_t**)arg[1]);
+          }
+          else
+              f->eax=-1;
           break;
       case SYS_MUNMAP:
-          break;
-      case SYS_CHDIR:
-          break;
-      case SYS_MKDIR:
-          break;
-      case SYS_READDIR:
-          break;
-      case SYS_ISDIR:
-          break;
-      case SYS_INUMBER:
+          get_argument(esp,arg,1);
+          check_address(arg[0]);
+          munmap(*(int*)arg[0]);
           break;
       case PIBONACCI:
           get_argument(esp,arg,1);

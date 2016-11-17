@@ -1,10 +1,27 @@
 #include "userprog/exception.h"
 #include <inttypes.h>
+#include <debug.h>
+#include <inttypes.h>
+#include <round.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "userprog/gdt.h"
+#include "userprog/pagedir.h"
+#include "userprog/tss.h"
+#include "filesys/directory.h"
+#include "filesys/file.h"
+#include "filesys/filesys.h"
+#include "threads/flags.h"
+#include "threads/init.h"
+#include "threads/palloc.h"
+#include "threads/vaddr.h"
+#include "threads/malloc.h"
 #include "threads/interrupt.h"
 #include "threads/thread.h"
-
+#include "userprog/process.h"
+#include "vm/page.h"
+#include "vm/frame.h"
 /* Number of page faults processed. */
 static long long page_fault_cnt;
 
@@ -145,15 +162,78 @@ page_fault (struct intr_frame *f)
   /* Count page faults. */
   page_fault_cnt++;
 
-  thread_current() -> sync.exit_status = -1;
-  thread_exit();
-  return;
 
   /* Determine cause. */
   not_present = (f->error_code & PF_P) == 0;
   write = (f->error_code & PF_W) != 0;
   user = (f->error_code & PF_U) != 0;
+  /* default stack size limit is 8MB */
+#define STACK_SIZE_LIMIT (uint8_t*)((uint8_t*)PHYS_BASE - (uint8_t*)(8*1024*1024))
+  if(user && not_present)
+  {
+      uint8_t *upage = (uint8_t*)((unsigned)fault_addr / PGSIZE * PGSIZE);
+      struct suppage_entry *e = suppage_find(&thread_current()->suppage_table,upage);
 
+      if(e != NULL && e->is_segment) /*segment lazy loading */ 
+      {
+          // Get a page of memory. 
+          uint8_t *frm = frame_get_page (&thread_current()->frame_table,upage, PAL_USER|PAL_ZERO,e->writable);
+          if (frm != NULL)
+          {
+              // Load this page. 
+              file_seek(e->swap_file,e->offset);
+              if (file_read (e->swap_file,frm, e->length) == (int)e->length)
+                  return;
+              frame_free_page(&thread_current()->frame_table,upage);
+          }
+      }
+      else if (e != NULL && e-> is_mmap) /* mmap lazy loading */
+      {
+          // Get a page of memory. 
+          uint8_t *frm = frame_get_page (&thread_current()->frame_table,upage, PAL_USER|PAL_ZERO, e->writable);
+          if (frm != NULL)
+          {
+              off_t old_offset = file_tell(e->swap_file);
+              file_seek(e-> swap_file, e->length); 
+              if (file_read (e->swap_file,frm, e->length) == (int)e->length)
+              {
+                  file_seek(e->swap_file,old_offset);
+                  return;
+              }
+              file_seek(e->swap_file,old_offset);
+              frame_free_page(&thread_current() -> frame_table,upage);
+          }
+      }
+      /* Stack Growth */
+      if(user && not_present && write && (uint8_t*)fault_addr >= STACK_SIZE_LIMIT && (uint8_t*)fault_addr <= (uint8_t*)PHYS_BASE && (uint8_t*)f->esp <=(uint8_t*)PHYS_BASE)
+      {
+          uint8_t *sp_fault = pg_round_down((uint8_t*)fault_addr) + PGSIZE;
+          uint8_t *sp_esp = pg_round_down(f->esp) + PGSIZE;
+          uint8_t *stack_ptr;
+
+          if(sp_fault > sp_esp)
+              stack_ptr=sp_fault;
+          else
+              stack_ptr=sp_esp;
+          while(stack_ptr > (uint8_t*)f->esp || stack_ptr > (uint8_t*)fault_addr)
+          {
+              stack_ptr -= PGSIZE;
+              if(find_frame(&thread_current()->frame_table,stack_ptr)!=NULL)
+                  continue;
+              if(frame_get_page(&thread_current()->frame_table,stack_ptr,PAL_USER|PAL_ZERO,true)==NULL)
+                  break;
+          }
+          if(stack_ptr <= (uint8_t*)f->esp && stack_ptr <= (uint8_t*)fault_addr)
+              return;
+      }
+  }
+  if(user)
+  {
+      thread_current() -> sync.exit_status = -1;
+      thread_exit();
+      return;
+  }
+#undef STACK_SIZE_LIMIT
   /* To implement virtual memory, delete the rest of the function
      body, and replace it with code that brings in the page to
      which fault_addr refers. */

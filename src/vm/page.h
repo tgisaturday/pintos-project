@@ -14,12 +14,14 @@ struct suppage_entry
     struct file* swap_file;
     size_t offset;
     size_t length;
-
+    bool is_mmap;
+    bool is_segment;
+    bool writable;
     struct hash_elem elem;
 };
 struct lock page_lock;
 
-void suppage_insert(struct hash* suppage_table,uint8_t* upage, struct file *swap_file,size_t offset, size_t length);
+void suppage_insert(struct hash* suppage_table,uint8_t* upage, struct file *swap_file,size_t offset, size_t length, bool is_segment, bool writable);
 void suppage_remove(struct hash* suppage_table, uint8_t *upage);
 void suppage_destroy(struct hash* suppage_table);
 struct suppage_entry* suppage_find(struct hash* suppage_table, uint8_t* upage);
