@@ -5,7 +5,7 @@
 #include "filesys/file.h"
 void syscall_init (void);
 
-void check_address(void* address);
+void check_address(void* address,bool stack_growth);
 void get_argument(void *esp, void **arg, int count);
 int pibonacci(int n);
 int sum_of_four_integers(int a, int b, int c, int d);

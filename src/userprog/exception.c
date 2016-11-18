@@ -205,7 +205,7 @@ page_fault (struct intr_frame *f)
           }
       }
       /* Stack Growth */
-      if(user && not_present && write && (uint8_t*)fault_addr >= STACK_SIZE_LIMIT && (uint8_t*)fault_addr <= (uint8_t*)PHYS_BASE && (uint8_t*)f->esp <=(uint8_t*)PHYS_BASE)
+      if(user && not_present && write && (uint8_t*)fault_addr >= STACK_SIZE_LIMIT && (uint8_t*)fault_addr < (uint8_t*)PHYS_BASE && (uint8_t*)f->esp <(uint8_t*)PHYS_BASE && (uint8_t*)f->esp >= STACK_SIZE_LIMIT)
       {
           uint8_t *sp_fault = pg_round_down((uint8_t*)fault_addr) + PGSIZE;
           uint8_t *sp_esp = pg_round_down(f->esp) + PGSIZE;
@@ -227,6 +227,7 @@ page_fault (struct intr_frame *f)
               return;
       }
   }
+  
   if(user)
   {
       thread_current() -> sync.exit_status = -1;

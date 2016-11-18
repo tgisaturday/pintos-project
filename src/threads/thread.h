@@ -147,7 +147,7 @@ struct thread
 #endif
     struct hash frame_table;
     struct hash suppage_table;
-
+    void *esp;
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
   };
