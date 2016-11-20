@@ -22,12 +22,26 @@
 #define FR_POOL_SIZE 2048
 static int used_frame_pool = 0;
 static struct frame_entry fr_entry[FR_POOL_SIZE];
+struct list_elem *evict_target;
 
 uint8_t* frame_get_page(struct hash* frame_table,uint8_t* upage, enum palloc_flags pal_flags,bool writable)
 {
     lock_acquire(&frame_lock);
     uint8_t* frame=(uint8_t*)palloc_get_page(pal_flags);
     struct frame_entry* new_entry;
+    
+    if(frame==NULL)
+    {
+        lock_release(&frame_lock);
+        frame=eviction_target_find();
+        if(frame==NULL)
+        {
+            return NULL;
+        }
+        if(pal_flags & PAL_ZERO)
+            memset(frame,0,PGSIZE);
+        lock_acquire(&frame_lock);
+    }
     if(frame!=NULL)
     {
         new_entry=&fr_entry[used_frame_pool];
@@ -64,6 +78,7 @@ void frame_free_page(struct hash* frame_table,uint8_t* upage)
         lock_acquire(&(thread_current()->page_lock));
         list_remove(&frm->evict_elem);
         hash_delete(frame_table,&frm->elem);
+        pagedir_clear_page(frm->pagedir,frm->uaddr);
         palloc_free_page(frm->kaddr);
         lock_release(&(thread_current()->page_lock));
     }
@@ -103,6 +118,85 @@ struct frame_entry* find_frame(struct hash* frame_table,uint8_t* upage)
     else 
         return NULL;
 }
+
+uint8_t* eviction_target_find(void)
+{
+    lock_acquire(&frame_lock);
+    int loop_cnt=list_size(&frame_alllist) << 1;
+    
+    while(loop_cnt-- > 0)
+    {
+        if(evict_target == NULL || evict_target == list_end(&frame_alllist))
+        {
+            evict_target = list_begin(&frame_alllist);
+        }
+        struct frame_entry *e=list_entry(evict_target,struct frame_entry,evict_elem);
+
+        if(e->pinned)
+        {
+            if(evict_target !=list_end(&frame_alllist))
+            {
+                evict_target=list_next(evict_target);
+            }
+            else
+                evict_target=NULL;
+            continue;
+        }
+        lock_acquire(&e->alloc_to->page_lock);
+        if(pagedir_is_accessed(e->pagedir,e->uaddr))
+        {
+            pagedir_set_accessed(e->pagedir,e->uaddr,false);
+            lock_release(&e->alloc_to->page_lock);
+            if(evict_target !=list_end(&frame_alllist))
+            {
+                evict_target=list_next(evict_target);
+            }
+            else
+                evict_target=NULL;
+        }
+        else
+        {
+            lock_release(&e->alloc_to->page_lock);
+            unsigned offset=BITMAP_ERROR;
+            if(evict_target !=list_end(&frame_alllist))
+            {
+                evict_target=list_next(evict_target);
+            }
+            else
+                evict_target=NULL;
+            if(e->writable)
+            {
+                offset=swap_write(e->kaddr);
+            }
+            if(offset!=BITMAP_ERROR || !e->writable)
+            {
+                lock_acquire(&e->alloc_to->page_lock);
+                list_remove(&e->evict_elem);
+                hash_delete(&e->alloc_to->frame_table,&e->elem);
+                pagedir_clear_page(e->pagedir,e->uaddr);
+                lock_release(&e->alloc_to->page_lock);
+                uint8_t *kpage=e->kaddr;
+                if(e->writable)
+                {
+                    if(suppage_find(&e->alloc_to->suppage_table,e->uaddr)!=NULL)
+                        suppage_remove(&e->alloc_to->suppage_table,e->uaddr);
+                    suppage_insert(&e->alloc_to->suppage_table,e->uaddr,NULL,offset,PGSIZE,false,true);
+                }
+                lock_release(&frame_lock);
+                return kpage;
+            }
+            else
+            {
+                lock_release(&frame_lock);
+                return NULL;
+            }
+        }
+    }
+    lock_release(&frame_lock);
+    return NULL;
+
+}
+
 static hash_hash_func frame_hash_func;
 static hash_less_func frame_hash_less;
 

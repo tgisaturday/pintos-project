@@ -22,6 +22,7 @@
 #include "userprog/process.h"
 #include "vm/page.h"
 #include "vm/frame.h"
+#include "vm/swap.h"
 /* Number of page faults processed. */
 static long long page_fault_cnt;
 
@@ -194,7 +195,7 @@ page_fault (struct intr_frame *f)
           if (frm != NULL)
           {
               off_t old_offset = file_tell(e->swap_file);
-              file_seek(e-> swap_file, e->length); 
+              file_seek(e-> swap_file, e->offset); 
               if (file_read (e->swap_file,frm, e->length) == (int)e->length)
               {
                   file_seek(e->swap_file,old_offset);
@@ -204,30 +205,43 @@ page_fault (struct intr_frame *f)
               frame_free_page(&thread_current() -> frame_table,upage);
           }
       }
-      /* Stack Growth */
-      if(user && not_present && write && (uint8_t*)fault_addr >= STACK_SIZE_LIMIT && (uint8_t*)fault_addr < (uint8_t*)PHYS_BASE && (uint8_t*)f->esp <(uint8_t*)PHYS_BASE && (uint8_t*)f->esp >= STACK_SIZE_LIMIT)
+      else if(e!=NULL)
       {
-          uint8_t *sp_fault = pg_round_down((uint8_t*)fault_addr) + PGSIZE;
-          uint8_t *sp_esp = pg_round_down(f->esp) + PGSIZE;
-          uint8_t *stack_ptr;
-
-          if(sp_fault > sp_esp)
-              stack_ptr=sp_fault;
-          else
-              stack_ptr=sp_esp;
-          while(stack_ptr > (uint8_t*)f->esp || stack_ptr > (uint8_t*)fault_addr)
+          uint8_t* frm=frame_get_page(&thread_current()->frame_table,upage,PAL_USER|PAL_ZERO,e->writable);
+          if(frm!=NULL)
           {
-              stack_ptr -= PGSIZE;
-              if(find_frame(&thread_current()->frame_table,stack_ptr)!=NULL)
-                  continue;
-              if(frame_get_page(&thread_current()->frame_table,stack_ptr,PAL_USER|PAL_ZERO,true)==NULL)
-                  break;
-          }
-          if(stack_ptr <= (uint8_t*)f->esp && stack_ptr <= (uint8_t*)fault_addr)
+              swap_read(frm,e->offset);
+              suppage_remove(&thread_current()->suppage_table,upage);
               return;
+          }
       }
   }
-  
+  /* Stack Growth */
+  if(user && not_present && write 
+          && (uint8_t*)fault_addr >= STACK_SIZE_LIMIT
+          && (uint8_t*)fault_addr <= (uint8_t*)PHYS_BASE 
+          && (uint8_t*)f->esp <=(uint8_t*)PHYS_BASE 
+          && (uint8_t*)f->esp >= STACK_SIZE_LIMIT) 
+  {
+      uint8_t *sp_fault = pg_round_down((uint8_t*)fault_addr) + PGSIZE;
+      uint8_t *sp_esp = pg_round_down(f->esp) + PGSIZE;
+      uint8_t *stack_ptr;
+
+      if(sp_fault > sp_esp)
+          stack_ptr=sp_fault;
+      else
+          stack_ptr=sp_esp;
+      while(stack_ptr > (uint8_t*)f->esp || stack_ptr > (uint8_t*)fault_addr)
+      {
+          stack_ptr -= PGSIZE;
+          if(find_frame(&thread_current()->frame_table,stack_ptr)!=NULL)
+              continue;
+          if(frame_get_page(&thread_current()->frame_table,stack_ptr,PAL_USER|PAL_ZERO,true)==NULL)
+              break;
+      }
+      if(stack_ptr <= (uint8_t*)f->esp && stack_ptr <= (uint8_t*)fault_addr)
+          return;
+  }
   if(user)
   {
       thread_current() -> sync.exit_status = -1;

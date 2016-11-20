@@ -49,50 +49,67 @@ void check_address(void* address, bool stack_growth)
         thread_current()->sync.exit_status=-1;
         thread_exit();//exit(-1);
     }
+
     if(pagedir_get_page(cur->pagedir,address)!=NULL)
         return;
-
     //fix here .... send to page_fault handler?
     // if you send address to the page_fault handler, too much work. 
     uint8_t *upage=pg_round_down((uint8_t*)address);
     struct suppage_entry *e=suppage_find(&thread_current()->suppage_table,upage);
-
-    if(e != NULL && e->is_segment) // segment lazy loading 
+    if(e!= NULL)
     {
-        // Get a page of memory.
-        uint8_t *frm = frame_get_page (&thread_current()->frame_table,upage, PAL_USER|PAL_ZERO,e->writable);
-        if (frm != NULL)
+        if( e->is_segment) // segment lazy loading 
         {
-            // Load this page.
-            file_seek(e->swap_file,e->offset);
-            if (file_read (e->swap_file,frm, e->length) == (int)e->length)
-                return;
-            frame_free_page(&thread_current()->frame_table,upage);
-        }
-        thread_current()->sync.exit_status=-1;
-        thread_exit();//exit(-1);
-    }
-    else if (e != NULL && e-> is_mmap) // mmap lazy loading 
-    {
-        // Get a page of memory.
-        uint8_t *frm = frame_get_page (&thread_current()->frame_table,upage, PAL_USER|PAL_ZERO, e->writable);
-        if (frm != NULL)
-        {
-            off_t old_offset = file_tell(e->swap_file);
-            file_seek(e-> swap_file, e->length);
-            if (file_read (e->swap_file,frm, e->length) == (int)e->length)
+            // Get a page of memory.
+            uint8_t *frm = frame_get_page (&thread_current()->frame_table,upage, PAL_USER|PAL_ZERO,e->writable);
+            if (frm != NULL)
             {
-                file_seek(e->swap_file,old_offset);
+                // Load this page.
+                file_seek(e->swap_file,e->offset);
+                if (file_read (e->swap_file,frm, e->length) == (int)e->length)
+                    return;
+                frame_free_page(&thread_current()->frame_table,upage);
+            }
+            thread_current()->sync.exit_status=-1;
+            thread_exit();//exit(-1);
+        }
+        else if ( e-> is_mmap) // mmap lazy loading 
+        {
+            // Get a page of memory.
+            uint8_t *frm = frame_get_page (&thread_current()->frame_table,upage, PAL_USER|PAL_ZERO, e->writable);
+            if (frm != NULL)
+            {
+                file_seek(e-> swap_file, e->length);
+                if (file_read (e->swap_file,frm, e->length) == (int)e->length)
+                {
+                    return;
+                }
+                frame_free_page(&thread_current() -> frame_table,upage);
+                thread_current()->sync.exit_status=-1;
+                thread_exit();//exit(-1);
+            }
+            thread_current()->sync.exit_status=-1;
+            thread_exit();//exit(-1);
+        }
+        else if (e)
+        {
+            uint8_t *frm = frame_get_page (&thread_current()->frame_table,upage, PAL_USER|PAL_ZERO, e->writable);
+            if(frm!=NULL)
+            {
+                swap_read(frm,e->offset);
+                suppage_remove(&thread_current()->suppage_table,upage);
                 return;
             }
-            file_seek(e->swap_file,old_offset);
-            frame_free_page(&thread_current() -> frame_table,upage);
+            thread_current()->sync.exit_status=-1;
+            thread_exit();//exit(-1);
         }
-        thread_current()->sync.exit_status=-1;
-        thread_exit();//exit(-1);
     }
-
-     if(stack_growth == true && (uint8_t*)address >= STACK_SIZE_LIMIT &&(uint8_t*)address < (uint8_t*)PHYS_BASE && (uint8_t*)cur->esp < (uint8_t*)PHYS_BASE && (uint8_t*)cur->esp >= STACK_SIZE_LIMIT)
+     if(stack_growth == true 
+             && (uint8_t*)address >= STACK_SIZE_LIMIT 
+             &&(uint8_t*)address < (uint8_t*)PHYS_BASE 
+             && (uint8_t*)cur->esp < (uint8_t*)PHYS_BASE 
+             && (uint8_t*)cur->esp >= STACK_SIZE_LIMIT 
+             && (uint8_t*)cur->esp < (uint8_t*)address)
      {
          uint8_t *sp_addr = pg_round_down((uint8_t*)address) + PGSIZE;
          uint8_t *sp_esp = pg_round_down(cur->esp) + PGSIZE;
@@ -117,10 +134,116 @@ void check_address(void* address, bool stack_growth)
              cur->sync.exit_status=-1;
              thread_exit();//exit(-1);
          }
-
      }
      cur->sync.exit_status=-1;
      thread_exit();//exit(-1);
+}
+
+bool check_address_pinned(void* address, bool stack_growth)
+{
+    struct thread *cur=thread_current();
+
+    if(is_kernel_vaddr(address))
+    {
+        return false;
+    }
+    if(stack_growth ==true)
+    {
+        struct frame_entry* frm=find_frame(&cur->frame_table,pg_round_down((uint8_t*)address));
+        if(frm!=NULL)
+        {
+            if(frm->writable==false)
+            {
+                return false;
+            }
+        }
+    }
+    if (address==NULL)
+    {
+        return false;
+    }
+
+    if(pagedir_get_page(cur->pagedir,address)!=NULL)
+        return true;
+    //fix here .... send to page_fault handler?
+    // if you send address to the page_fault handler, too much work. 
+    uint8_t *upage=pg_round_down((uint8_t*)address);
+    struct suppage_entry *e=suppage_find(&thread_current()->suppage_table,upage);
+    if(e!= NULL)
+    {
+        if( e->is_segment) // segment lazy loading 
+        {
+            // Get a page of memory.
+            uint8_t *frm = frame_get_page (&thread_current()->frame_table,upage, PAL_USER|PAL_ZERO,e->writable);
+            if (frm != NULL)
+            {
+                // Load this page.
+                file_seek(e->swap_file,e->offset);
+                if (file_read (e->swap_file,frm, e->length) == (int)e->length)
+                    return true;
+                frame_free_page(&thread_current()->frame_table,upage);
+            }
+            return false;
+        }
+        else if ( e-> is_mmap) // mmap lazy loading 
+        {
+            // Get a page of memory.
+            uint8_t *frm = frame_get_page (&thread_current()->frame_table,upage, PAL_USER|PAL_ZERO, e->writable);
+            if (frm != NULL)
+            {
+                file_seek(e-> swap_file, e->length);
+                if (file_read (e->swap_file,frm, e->length) == (int)e->length)
+                {
+                    return true;
+                }
+                frame_free_page(&thread_current() -> frame_table,upage);
+                return false;
+            }
+            return false;
+        }
+        else if (e)
+        {
+            uint8_t *frm = frame_get_page (&thread_current()->frame_table,upage, PAL_USER|PAL_ZERO, e->writable);
+            if(frm!=NULL)
+            {
+                swap_read(frm,e->offset);
+                suppage_remove(&thread_current()->suppage_table,upage);
+                return true;
+            }
+            return false;
+        }
+    }
+     if(stack_growth == true 
+             && (uint8_t*)address >= STACK_SIZE_LIMIT 
+             &&(uint8_t*)address < (uint8_t*)PHYS_BASE 
+             && (uint8_t*)cur->esp < (uint8_t*)PHYS_BASE 
+             && (uint8_t*)cur->esp >= STACK_SIZE_LIMIT 
+             && (uint8_t*)cur->esp < (uint8_t*)address)
+     {
+         uint8_t *sp_addr = pg_round_down((uint8_t*)address) + PGSIZE;
+         uint8_t *sp_esp = pg_round_down(cur->esp) + PGSIZE;
+         uint8_t *stack_ptr;
+
+         if(sp_addr > sp_esp)
+             stack_ptr=sp_addr;
+         else
+             stack_ptr=sp_esp;
+         while(stack_ptr > (uint8_t*)cur->esp || stack_ptr > (uint8_t*)address)
+         {
+             stack_ptr -= PGSIZE;
+             if(find_frame(&cur->frame_table,stack_ptr)!=NULL)
+                 continue;
+             if(frame_get_page(&cur->frame_table,stack_ptr,PAL_USER|PAL_ZERO,true)==NULL)
+                 break;
+         }
+         if(stack_ptr <= (uint8_t*)cur->esp && stack_ptr <= (uint8_t*)address)
+             return true;
+         else
+         {
+             return false;
+         }
+     }
+     return false;
 }
 void get_argument(void *esp, void **arg, int count)
 {
@@ -333,9 +456,23 @@ syscall_handler (struct intr_frame *f UNUSED)
           get_argument(esp,arg,2);
           for(i=0;i<2;i++)
               check_address(arg[i],false);
-          check_address(*(char**)arg[0],false);
+          check_address_pinned(*(char**)arg[0],false);
           lock_acquire(&file_rw);
+
+          void* buf=*(void**)arg[0];
+          if(check_address_pinned(buf,true)==false)
+          {
+              lock_release(&file_rw);
+              thread_current()->sync.exit_status=-1;
+              thread_exit();
+          }
+          struct frame_entry* frm=find_frame(&thread_current()->frame_table,pg_round_down(buf));
+          if(frm)
+              frm->pinned=true;
+
           rt=filesys_create(*(char**)arg[0],*(int32_t*)arg[1]);
+          if(frm)
+              frm->pinned=false;
           lock_release(&file_rw);
           f->eax=rt;
           break;
@@ -390,9 +527,9 @@ syscall_handler (struct intr_frame *f UNUSED)
           f->eax=f_size;
           break;
       case SYS_READ: //Project 1
-          get_argument(esp,arg,3); 
+          get_argument(esp,arg,3);
           check_address(arg[0],false);
-          check_address(arg[1],false);
+          check_address(arg[1],true);
           check_address(arg[2],false);
           check_address(*(void**)arg[1],true);
           check_address(*(void**)arg[1]+*(int*)arg[2],true);
@@ -412,13 +549,55 @@ syscall_handler (struct intr_frame *f UNUSED)
           {
               lock_acquire(&(file_rw));
               new_file=search_file(*(int*)arg[0]);
+              void *buffer_r=*(void**)arg[1];
+              int size_r=*(int*)arg[2];
               if(new_file!=NULL)
               {
+                  /* pin */
+                  int size_left_r=(size_r+PGSIZE -1)/PGSIZE*PGSIZE + (size_r % PGSIZE==0 ? PGSIZE :0);
+                  int buf_ptr_r=0;
+
+                  while(size_left_r >0)
+                  {
+                      if(check_address_pinned(buffer_r+buf_ptr_r,true)==false)
+                      {
+                          lock_release(&(file_rw));
+                          thread_current()->sync.exit_status=-1;
+                          thread_exit();
+                      }
+                      struct frame_entry* frm=find_frame(&thread_current()->frame_table,pg_round_down(buffer_r)+buf_ptr_r);
+                      if(frm)
+                          frm->pinned=true;
+                      buf_ptr_r += PGSIZE;
+                      size_left_r -= PGSIZE;
+                  }
+
+                  /* read file */
                   f_size=file_read(new_file,*(void**)arg[1],*(int*)arg[2]);
+
+                  /* unpin */
+                  size_left_r=(size_r+PGSIZE -1)/PGSIZE*PGSIZE + (size_r % PGSIZE==0 ? PGSIZE :0);
+                  buf_ptr_r=0;
+
+                  while(size_left_r >0)
+                  {
+                      if(check_address_pinned(buffer_r+buf_ptr_r,true)==false)
+                      {
+                          lock_release(&(file_rw));
+                          thread_current()->sync.exit_status=-1;
+                          thread_exit();
+                      }
+                      struct frame_entry* frm=find_frame(&thread_current()->frame_table,pg_round_down(buffer_r)+buf_ptr_r);
+                      if(frm)
+                          frm->pinned=false;
+                      buf_ptr_r += PGSIZE;
+                      size_left_r -= PGSIZE;
+                  }
                   f->eax=f_size;
               }
               else
                   f->eax=-1;
+
               lock_release(&(file_rw));
           }
           break;
@@ -433,9 +612,48 @@ syscall_handler (struct intr_frame *f UNUSED)
           {
               lock_acquire(&(file_rw));
               new_file=search_file(*(int*)arg[0]);
+
+              void *buffer_w=*(void**)arg[1];
+              int size_w=*(int*)arg[2];
               if(new_file!=NULL)
               {
+                  /* pin */
+                  int size_left_w=(size_w+PGSIZE -1)/PGSIZE*PGSIZE + (size_w % PGSIZE==0 ? PGSIZE :0);
+                  int buf_ptr_w=0;
+
+                  while(size_left_w >0)
+                  {
+                      if(check_address_pinned(buffer_w+buf_ptr_w,true)==false)
+                      {
+                          lock_release(&(file_rw));
+                          thread_current()->sync.exit_status=-1;
+                          thread_exit();
+                      }
+                      struct frame_entry* frm=find_frame(&thread_current()->frame_table,pg_round_down(buffer_w)+buf_ptr_w);
+                      if(frm)
+                          frm->pinned=true;
+                      buf_ptr_w += PGSIZE;
+                      size_left_w -= PGSIZE;
+                  }
                   f_size=file_write(new_file,*(void**)arg[1],*(int*)arg[2]);
+                  /* unpin */
+                  size_left_w=(size_w+PGSIZE -1)/PGSIZE*PGSIZE + (size_w % PGSIZE==0 ? PGSIZE :0);
+                  buf_ptr_w=0;
+
+                  while(size_left_w >0)
+                  {
+                      if(check_address_pinned(buffer_w+buf_ptr_w,true)==false)
+                      {
+                          lock_release(&(file_rw));
+                          thread_current()->sync.exit_status=-1;
+                          thread_exit();
+                      }
+                      struct frame_entry* frm=find_frame(&thread_current()->frame_table,pg_round_down(buffer_w)+buf_ptr_w);
+                      if(frm)
+                          frm->pinned=false;
+                      buf_ptr_w += PGSIZE;
+                      size_left_w -= PGSIZE;
+                  }
                   f->eax=f_size;
               }
               else
