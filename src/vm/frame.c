@@ -22,8 +22,12 @@
 #define FR_POOL_SIZE 2048
 static int used_frame_pool = 0;
 static struct frame_entry fr_entry[FR_POOL_SIZE];
-struct list_elem *evict_target;
-
+void frame_init(void)
+{
+    list_init(&frame_alllist);
+    lock_init(&frame_lock);
+    evict_target=NULL;
+}
 uint8_t* frame_get_page(struct hash* frame_table,uint8_t* upage, enum palloc_flags pal_flags,bool writable)
 {
     lock_acquire(&frame_lock);
@@ -38,35 +42,27 @@ uint8_t* frame_get_page(struct hash* frame_table,uint8_t* upage, enum palloc_fla
         {
             return NULL;
         }
+        lock_acquire(&frame_lock);
         if(pal_flags & PAL_ZERO)
             memset(frame,0,PGSIZE);
-        lock_acquire(&frame_lock);
     }
-    if(frame!=NULL)
-    {
-        new_entry=&fr_entry[used_frame_pool];
-        used_frame_pool++;
+    new_entry=&fr_entry[used_frame_pool];
+    used_frame_pool++;
 
-        lock_acquire(&(thread_current()->page_lock));
-        new_entry->pagedir=thread_current()->pagedir;
-        new_entry->kaddr=frame;
-        new_entry->uaddr=upage;
-        new_entry->pinned=false;
-        new_entry->writable=writable;
-        new_entry->alloc_to=thread_current();
-        hash_insert(frame_table,&new_entry->elem);
-        list_push_back(&frame_alllist,&new_entry->evict_elem);
-        pagedir_set_page(new_entry->pagedir,new_entry->uaddr,new_entry->kaddr,new_entry->writable);
-        lock_release(&(thread_current()->page_lock));
+    lock_acquire(&(thread_current()->page_lock));
+    new_entry->pagedir=thread_current()->pagedir;
+    new_entry->kaddr=frame;
+    new_entry->uaddr=upage;
+    new_entry->pinned=false;
+    new_entry->writable=writable;
+    new_entry->alloc_to=thread_current();
+    hash_insert(frame_table,&new_entry->elem);
+    list_push_back(&frame_alllist,&new_entry->evict_elem);
+    pagedir_set_page(new_entry->pagedir,new_entry->uaddr,new_entry->kaddr,new_entry->writable);
+    lock_release(&(thread_current()->page_lock));
 
-        lock_release(&frame_lock);
-        return frame;
-    }
-    else
-    {
-        lock_release(&frame_lock);
-        return NULL;
-    }
+    lock_release(&frame_lock);
+    return frame;
 }
 void frame_free_page(struct hash* frame_table,uint8_t* upage)
 {
@@ -75,12 +71,19 @@ void frame_free_page(struct hash* frame_table,uint8_t* upage)
     frm=find_frame(frame_table,upage);
     if(frm != NULL)
     {
+        if(&frm->evict_elem == evict_target)
+        {
+            if(evict_target ==list_end(&frame_alllist))
+                evict_target=list_next(evict_target);
+            else
+                evict_target=NULL;
+        }
         lock_acquire(&(thread_current()->page_lock));
         list_remove(&frm->evict_elem);
         hash_delete(frame_table,&frm->elem);
         pagedir_clear_page(frm->pagedir,frm->uaddr);
-        palloc_free_page(frm->kaddr);
         lock_release(&(thread_current()->page_lock));
+        palloc_free_page(frm->kaddr);
     }
     lock_release(&frame_lock);
 }
@@ -95,11 +98,22 @@ void frame_table_destroy(struct hash* frame_table)
 
 static void frame_destructor(struct hash_elem *e, void *aux)
 {
-    struct frame_entry *frame;
-    frame=hash_entry(e,struct frame_entry,elem);
-    if(frame!=NULL)
+    struct frame_entry *frm;
+    frm=hash_entry(e,struct frame_entry,elem);
+    if(frm!=NULL)
     {
-        list_remove(&frame->evict_elem);
+        if(&frm->evict_elem == evict_target)
+        {
+            if(evict_target ==list_end(&frame_alllist))
+                evict_target=list_next(evict_target);
+            else
+                evict_target=NULL;
+        }
+       // lock_acquire(&(thread_current()->page_lock));
+        list_remove(&frm->evict_elem);
+        //pagedir_clear_page(frm->pagedir,frm->uaddr);
+       // lock_release(&(thread_current()->page_lock));
+       // palloc_free_page(frm->kaddr);
     }
 }
 struct frame_entry* find_frame(struct hash* frame_table,uint8_t* upage)

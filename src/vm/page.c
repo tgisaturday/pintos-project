@@ -45,7 +45,8 @@ void suppage_remove(struct hash* suppage_table, uint8_t *upage)
     if(to_remove!=NULL)
     {
         hash_delete(suppage_table,&to_remove->elem);
-        //swap_free();
+        if(to_remove->swap_file==NULL)
+            swap_free(to_remove->offset);
     }
     lock_release(&page_lock);
 }
@@ -59,7 +60,8 @@ void suppage_destructor(struct hash_elem *elem,void *aux)
 {
     struct suppage_entry *sup;
     sup=hash_entry(elem, struct suppage_entry,elem);
-    //swap_free();
+    if(sup->swap_file==NULL)
+        swap_free(sup->offset);
 }
 struct suppage_entry* suppage_find(struct hash* suppage_table, uint8_t* upage)
 {

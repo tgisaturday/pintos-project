@@ -178,13 +178,14 @@ process_exit (void)
       }
       free(cur_file);
   }
+  lock_release(&file_rw);
+
   while(!list_empty(&(cur->mmap_list)))
   {
       e=list_pop_front(&cur->mmap_list);
       cur_mmap=list_entry(e,struct mmap_entry,elem);
       munmap(cur_mmap->md);
   }
-  lock_release(&file_rw);
   sema_up(&(cur->sync.wait));//parent should wait until child exit(unlock here)
   token=strtok_r(cur->name," \t\n",&save_ptr);
   printf("%s: exit(%d)\n",token,cur->sync.exit_status);
@@ -215,8 +216,8 @@ process_exit (void)
           list_remove(e);
       }
   }
-  frame_table_destroy(&(cur->frame_table));
   suppage_destroy(&(cur->suppage_table));
+  frame_table_destroy(&(cur->frame_table));
   intr_set_level (old_level);
 
   sema_down(&(cur->sync.exit));//child should wait until parent takes it's exit_status(lock here)

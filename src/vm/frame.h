@@ -22,6 +22,7 @@ struct frame_entry
 
 struct lock frame_lock;
 struct list frame_alllist;
+struct list_elem *evict_target;
 
 uint8_t* frame_get_page(struct hash* frame_table,uint8_t* upage, enum palloc_flags pal_flags,bool writable);
 void frame_free_page(struct hash* frame_table,uint8_t* upage);
@@ -30,5 +31,6 @@ struct frame_entry* find_frame(struct hash* frame_table,uint8_t* upage);
 uint8_t* eviction_target_find(void);
 void frame_table_init(struct hash* frame_table);
 
+void frame_init(void);
 
 #endif

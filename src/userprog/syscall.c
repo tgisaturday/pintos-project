@@ -109,7 +109,7 @@ void check_address(void* address, bool stack_growth)
              &&(uint8_t*)address < (uint8_t*)PHYS_BASE 
              && (uint8_t*)cur->esp < (uint8_t*)PHYS_BASE 
              && (uint8_t*)cur->esp >= STACK_SIZE_LIMIT 
-             && (uint8_t*)cur->esp < (uint8_t*)address)
+             && (uint8_t*)cur->esp <= (uint8_t*)address)
      {
          uint8_t *sp_addr = pg_round_down((uint8_t*)address) + PGSIZE;
          uint8_t *sp_esp = pg_round_down(cur->esp) + PGSIZE;
@@ -266,24 +266,25 @@ int mmap(struct file *map_file, uint8_t* upage)
         return -1;
     }
     /* if in STACK */
-    if(STACK_SIZE_LIMIT <= upage && upage + mmap_page_num * PGSIZE >= (uint8_t*)PHYS_BASE)
+    if(STACK_SIZE_LIMIT <= upage 
+            && upage + mmap_page_num * PGSIZE < (uint8_t*)PHYS_BASE)
     {
         lock_release(&mmap_lock);
         return -1;
     }
     int mmap_left=mmap_length;
     int offset = 0;
+    int old_offset=0;
     uint8_t *upage_cur=upage;
     struct file* file_cur=map_file;
 
     /* if zero-sized file */
-    if(mmap_page_num < 1 || mmap_length < 1)
+    if(file_cur==NULL || mmap_page_num < 1 || mmap_length < 1)
     {
         lock_release(&mmap_lock);
         return -1;
     }
-
-    int old_offset=file_tell(file_cur);
+    old_offset=file_tell(file_cur);
 
     /* if page is already assigned */
     int i;
@@ -456,16 +457,12 @@ syscall_handler (struct intr_frame *f UNUSED)
           get_argument(esp,arg,2);
           for(i=0;i<2;i++)
               check_address(arg[i],false);
-         // check_address(*(char**)arg[0],false);
+          check_address(*(char**)arg[0],false);
+          check_address(*(char**)arg[0]+strlen(*(char**)arg[0]),false);
           lock_acquire(&file_rw);
 
-          void* buf=*(void**)arg[0];
-          if(check_address_pinned(buf,false)==false)
-          {
-              lock_release(&file_rw);
-              thread_current()->sync.exit_status=-1;
-              thread_exit();
-          }
+          uint8_t* buf=pg_round_down(*(void**)arg[0]);
+
           struct frame_entry* frm=find_frame(&thread_current()->frame_table,pg_round_down(buf));
           if(frm)
               frm->pinned=true;
@@ -480,15 +477,14 @@ syscall_handler (struct intr_frame *f UNUSED)
           get_argument(esp,arg,1);
           check_address(arg[0],false);
           check_address(*(char**)arg[0],false);
-          lock_acquire(&file_rw);
           rt=filesys_remove(*(char**)arg[0]);
-          lock_release(&file_rw);
           f->eax=rt;
           break;
       case SYS_OPEN:
           get_argument(esp,arg,1);
           check_address(arg[0],false);
           check_address(*(char**)arg[0],false);
+          check_address(*(char**)arg[0]+strlen(*(char**)arg[0]),false);
           lock_acquire(&file_rw);
           new_file=filesys_open(*(char**)arg[0]);
           lock_release(&file_rw);
@@ -549,7 +545,7 @@ syscall_handler (struct intr_frame *f UNUSED)
           {
               lock_acquire(&(file_rw));
               new_file=search_file(*(int*)arg[0]);
-              void *buffer_r=*(void**)arg[1];
+              void *buffer_r=pg_round_down(*(void**)arg[1]);
               int size_r=*(int*)arg[2];
               if(new_file!=NULL)
               {
@@ -559,15 +555,12 @@ syscall_handler (struct intr_frame *f UNUSED)
 
                   while(size_left_r >0)
                   {
-                      if(check_address_pinned(buffer_r+buf_ptr_r,true)==false)
+                      if(check_address_pinned(buffer_r+buf_ptr_r,true)==true)
                       {
-                          lock_release(&(file_rw));
-                          thread_current()->sync.exit_status=-1;
-                          thread_exit();
+                          struct frame_entry* frm=find_frame(&thread_current()->frame_table,pg_round_down(buffer_r)+buf_ptr_r);
+                          if(frm)
+                              frm->pinned=true;
                       }
-                      struct frame_entry* frm=find_frame(&thread_current()->frame_table,pg_round_down(buffer_r)+buf_ptr_r);
-                      if(frm)
-                          frm->pinned=true;
                       buf_ptr_r += PGSIZE;
                       size_left_r -= PGSIZE;
                   }
@@ -581,15 +574,12 @@ syscall_handler (struct intr_frame *f UNUSED)
 
                   while(size_left_r >0)
                   {
-                      if(check_address_pinned(buffer_r+buf_ptr_r,true)==false)
+                      if(check_address_pinned(buffer_r+buf_ptr_r,true)==true)
                       {
-                          lock_release(&(file_rw));
-                          thread_current()->sync.exit_status=-1;
-                          thread_exit();
-                      }
                       struct frame_entry* frm=find_frame(&thread_current()->frame_table,pg_round_down(buffer_r)+buf_ptr_r);
                       if(frm)
                           frm->pinned=false;
+                      }
                       buf_ptr_r += PGSIZE;
                       size_left_r -= PGSIZE;
                   }
@@ -613,25 +603,22 @@ syscall_handler (struct intr_frame *f UNUSED)
               lock_acquire(&(file_rw));
               new_file=search_file(*(int*)arg[0]);
 
-              void *buffer_w=*(void**)arg[1];
-              int size_w=*(int*)arg[2];
               if(new_file!=NULL)
               {
+                  void *buffer_w=pg_round_down(*(void**)arg[1]);
+                  int size_w=*(int*)arg[2];
                   /* pin */
                   int size_left_w=(size_w+PGSIZE -1)/PGSIZE*PGSIZE + (size_w % PGSIZE==0 ? PGSIZE :0);
                   int buf_ptr_w=0;
 
                   while(size_left_w >0)
                   {
-                      if(check_address_pinned(buffer_w+buf_ptr_w,true)==false)
+                      if(check_address_pinned(buffer_w+buf_ptr_w,true)==true)
                       {
-                          lock_release(&(file_rw));
-                          thread_current()->sync.exit_status=-1;
-                          thread_exit();
+                          struct frame_entry* frm=find_frame(&thread_current()->frame_table,pg_round_down(buffer_w)+buf_ptr_w);
+                          if(frm)
+                              frm->pinned=true;
                       }
-                      struct frame_entry* frm=find_frame(&thread_current()->frame_table,pg_round_down(buffer_w)+buf_ptr_w);
-                      if(frm)
-                          frm->pinned=true;
                       buf_ptr_w += PGSIZE;
                       size_left_w -= PGSIZE;
                   }
@@ -642,15 +629,12 @@ syscall_handler (struct intr_frame *f UNUSED)
 
                   while(size_left_w >0)
                   {
-                      if(check_address_pinned(buffer_w+buf_ptr_w,true)==false)
+                      if(check_address_pinned(buffer_w+buf_ptr_w,true)==true)
                       {
-                          lock_release(&(file_rw));
-                          thread_current()->sync.exit_status=-1;
-                          thread_exit();
+                          struct frame_entry* frm=find_frame(&thread_current()->frame_table,pg_round_down(buffer_w)+buf_ptr_w);
+                          if(frm)
+                              frm->pinned=false;
                       }
-                      struct frame_entry* frm=find_frame(&thread_current()->frame_table,pg_round_down(buffer_w)+buf_ptr_w);
-                      if(frm)
-                          frm->pinned=false;
                       buf_ptr_w += PGSIZE;
                       size_left_w -= PGSIZE;
                   }

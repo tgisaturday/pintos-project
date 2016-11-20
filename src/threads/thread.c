@@ -105,16 +105,13 @@ thread_init (void)
 {
   ASSERT (intr_get_level () == INTR_OFF);
 
+  frame_init();
+  lock_init (&page_lock);
+  lock_init (&mmap_lock);
   lock_init (&tid_lock);
   list_init (&ready_list);
   list_init (&all_list);
   list_init (&sleep_list);
-#ifdef VM
-  list_init (&frame_alllist);
-  lock_init (&frame_lock);
-  lock_init (&page_lock);
-  lock_init (&mmap_lock);
-#endif
   load_average=0;
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();
