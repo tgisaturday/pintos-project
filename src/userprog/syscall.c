@@ -456,11 +456,11 @@ syscall_handler (struct intr_frame *f UNUSED)
           get_argument(esp,arg,2);
           for(i=0;i<2;i++)
               check_address(arg[i],false);
-          check_address_pinned(*(char**)arg[0],false);
+         // check_address(*(char**)arg[0],false);
           lock_acquire(&file_rw);
 
           void* buf=*(void**)arg[0];
-          if(check_address_pinned(buf,true)==false)
+          if(check_address_pinned(buf,false)==false)
           {
               lock_release(&file_rw);
               thread_current()->sync.exit_status=-1;
