@@ -21,6 +21,10 @@ struct suppage_entry
 };
 struct lock page_lock;
 
+void suppage_init(void);
+void page_lock_acquire(void);
+void page_lock_release(void);
+
 void suppage_insert(struct hash* suppage_table,uint8_t* upage, struct file *swap_file,size_t offset, size_t length, bool is_segment, bool writable);
 void suppage_remove(struct hash* suppage_table, uint8_t *upage);
 void suppage_destroy(struct hash* suppage_table);

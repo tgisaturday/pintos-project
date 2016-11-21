@@ -106,7 +106,7 @@ thread_init (void)
   ASSERT (intr_get_level () == INTR_OFF);
 
   frame_init();
-  lock_init (&page_lock);
+  suppage_init();
   lock_init (&mmap_lock);
   lock_init (&tid_lock);
   list_init (&ready_list);

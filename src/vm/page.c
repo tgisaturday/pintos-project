@@ -17,30 +17,54 @@
 #include "threads/thread.h"
 #include "vm/swap.h"
 
-#define SP_POOL_SIZE 2048
+#define SP_POOL_SIZE 4000
 static int used_suppage_pool = 0;
 static struct suppage_entry sp_entry[SP_POOL_SIZE];
+int page_lock_depth;
+void suppage_init()
+{
+    page_lock_depth=0;
+    lock_init(&page_lock);
+}
+void page_lock_acquire()
+{
+    if(lock_held_by_current_thread(&page_lock))
+            page_lock_depth++;
+    else
+        lock_acquire(&page_lock);
+}
+void page_lock_release()
+{
+    if(page_lock_depth >0)
+        page_lock_depth--;
+    else
+        lock_release(&page_lock);
+}
 
 void suppage_insert(struct hash* suppage_table,uint8_t* upage, struct file *swap_file,size_t offset, size_t length,bool is_segment,bool writable)
 {
     struct suppage_entry* new_entry;
-    lock_acquire(&page_lock);
+
+    page_lock_acquire();
     new_entry=&sp_entry[used_suppage_pool];
     used_suppage_pool++;
+
     new_entry->uaddr=upage;
-    hash_insert(suppage_table,&new_entry->elem);
     new_entry->swap_file=swap_file;
     new_entry->offset=offset;
     new_entry->length=length;
     new_entry->is_mmap=(is_segment ? false:(swap_file!=NULL));
     new_entry->is_segment=is_segment;
     new_entry->writable=writable;
-    lock_release(&page_lock);
+
+    hash_insert(suppage_table,&new_entry->elem);
+
+    page_lock_release();
 }
 void suppage_remove(struct hash* suppage_table, uint8_t *upage)
 {
     struct suppage_entry *to_remove;
-    lock_acquire(&page_lock);
+    page_lock_acquire();
     to_remove=suppage_find(suppage_table,upage);
     if(to_remove!=NULL)
     {
@@ -48,7 +72,7 @@ void suppage_remove(struct hash* suppage_table, uint8_t *upage)
         if(to_remove->swap_file==NULL)
             swap_free(to_remove->offset);
     }
-    lock_release(&page_lock);
+    page_lock_release();
 }
 static hash_action_func suppage_destructor;
 
@@ -56,7 +80,7 @@ void suppage_destroy(struct hash* suppage_table)
 {
     hash_destroy(suppage_table,suppage_destructor);
 }
-void suppage_destructor(struct hash_elem *elem,void *aux)
+void suppage_destructor(struct hash_elem *elem,void *aux UNUSED)
 {
     struct suppage_entry *sup;
     sup=hash_entry(elem, struct suppage_entry,elem);
@@ -82,12 +106,12 @@ struct suppage_entry* suppage_find(struct hash* suppage_table, uint8_t* upage)
 static hash_hash_func suppage_hash_func;
 static hash_less_func suppage_hash_less;
 
-static unsigned suppage_hash_func(const struct hash_elem *e, void *aux)
+static unsigned suppage_hash_func(const struct hash_elem *e, void *aux UNUSED)
 {
     return hash_int((int)hash_entry(e,struct suppage_entry,elem)->uaddr);
 }
 
-static bool suppage_hash_less(const struct hash_elem *a,const struct hash_elem *b,void* aux)
+static bool suppage_hash_less(const struct hash_elem *a,const struct hash_elem *b,void* aux UNUSED) 
 {
     return hash_entry(a,struct suppage_entry,elem)->uaddr < hash_entry(b,struct suppage_entry,elem)->uaddr;
 }

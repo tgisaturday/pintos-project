@@ -30,7 +30,8 @@ void frame_table_destroy(struct hash* frame_table);
 struct frame_entry* find_frame(struct hash* frame_table,uint8_t* upage);
 uint8_t* eviction_target_find(void);
 void frame_table_init(struct hash* frame_table);
-
+void frame_lock_acquire(void);
+void frame_lock_release(void);
 void frame_init(void);
 
 #endif

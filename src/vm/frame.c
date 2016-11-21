@@ -19,30 +19,46 @@
 #include "vm/page.h"
 #include "vm/swap.h"
 
-#define FR_POOL_SIZE 2048
+#define FR_POOL_SIZE 4000
 static int used_frame_pool = 0;
 static struct frame_entry fr_entry[FR_POOL_SIZE];
+static int frame_lock_depth;
 void frame_init(void)
 {
     list_init(&frame_alllist);
     lock_init(&frame_lock);
+    frame_lock_depth=0;
     evict_target=NULL;
+}
+void frame_lock_acquire()
+{
+    if(lock_held_by_current_thread(&frame_lock))
+        frame_lock_depth++;
+    else
+        lock_acquire(&frame_lock);
+}
+void frame_lock_release()
+{
+    if(frame_lock_depth >0)
+        frame_lock_depth--;
+    else
+        lock_release(&frame_lock);
 }
 uint8_t* frame_get_page(struct hash* frame_table,uint8_t* upage, enum palloc_flags pal_flags,bool writable)
 {
-    lock_acquire(&frame_lock);
+    frame_lock_acquire();
     uint8_t* frame=(uint8_t*)palloc_get_page(pal_flags);
     struct frame_entry* new_entry;
     
     if(frame==NULL)
     {
-        lock_release(&frame_lock);
+        frame_lock_release();
         frame=eviction_target_find();
         if(frame==NULL)
         {
             return NULL;
         }
-        lock_acquire(&frame_lock);
+        frame_lock_acquire();
         if(pal_flags & PAL_ZERO)
             memset(frame,0,PGSIZE);
     }
@@ -61,13 +77,13 @@ uint8_t* frame_get_page(struct hash* frame_table,uint8_t* upage, enum palloc_fla
     pagedir_set_page(new_entry->pagedir,new_entry->uaddr,new_entry->kaddr,new_entry->writable);
     lock_release(&(thread_current()->page_lock));
 
-    lock_release(&frame_lock);
+    frame_lock_release();
     return frame;
 }
 void frame_free_page(struct hash* frame_table,uint8_t* upage)
 {
     struct frame_entry* frm=NULL;
-    lock_acquire(&frame_lock);
+    frame_lock_acquire();
     frm=find_frame(frame_table,upage);
     if(frm != NULL)
     {
@@ -85,18 +101,18 @@ void frame_free_page(struct hash* frame_table,uint8_t* upage)
         lock_release(&(thread_current()->page_lock));
         palloc_free_page(frm->kaddr);
     }
-    lock_release(&frame_lock);
+    frame_lock_release();
 }
 static hash_action_func frame_destructor;
 
 void frame_table_destroy(struct hash* frame_table)
 {
-    lock_acquire(&frame_lock);
+    frame_lock_acquire();
     hash_destroy(frame_table,frame_destructor);
-    lock_release(&frame_lock);
+    frame_lock_release();
 }
 
-static void frame_destructor(struct hash_elem *e, void *aux)
+static void frame_destructor(struct hash_elem *e, void* aux UNUSED)
 {
     struct frame_entry *frm;
     frm=hash_entry(e,struct frame_entry,elem);
@@ -111,7 +127,7 @@ static void frame_destructor(struct hash_elem *e, void *aux)
         }
        // lock_acquire(&(thread_current()->page_lock));
         list_remove(&frm->evict_elem);
-        //pagedir_clear_page(frm->pagedir,frm->uaddr);
+       // pagedir_clear_page(frm->pagedir,frm->uaddr);
        // lock_release(&(thread_current()->page_lock));
        // palloc_free_page(frm->kaddr);
     }
@@ -135,7 +151,7 @@ struct frame_entry* find_frame(struct hash* frame_table,uint8_t* upage)
 
 uint8_t* eviction_target_find(void)
 {
-    lock_acquire(&frame_lock);
+    frame_lock_acquire();
     int loop_cnt=list_size(&frame_alllist) << 1;
     
     while(loop_cnt-- > 0)
@@ -196,17 +212,17 @@ uint8_t* eviction_target_find(void)
                         suppage_remove(&e->alloc_to->suppage_table,e->uaddr);
                     suppage_insert(&e->alloc_to->suppage_table,e->uaddr,NULL,offset,PGSIZE,false,true);
                 }
-                lock_release(&frame_lock);
+                frame_lock_release();
                 return kpage;
             }
             else
             {
-                lock_release(&frame_lock);
+                frame_lock_release();
                 return NULL;
             }
         }
     }
-    lock_release(&frame_lock);
+    frame_lock_release();
     return NULL;
 
 }
@@ -214,12 +230,12 @@ uint8_t* eviction_target_find(void)
 static hash_hash_func frame_hash_func;
 static hash_less_func frame_hash_less;
 
-static unsigned frame_hash_func(const struct hash_elem *e, void *aux)
+static unsigned frame_hash_func(const struct hash_elem *e, void* aux UNUSED)
 {
     return hash_int((int)hash_entry(e,struct frame_entry,elem)->uaddr);
 }
 
-static bool frame_hash_less(const struct hash_elem *a,const struct hash_elem *b,void* aux)
+static bool frame_hash_less(const struct hash_elem *a,const struct hash_elem *b,void* aux UNUSED)
 {
     return hash_entry(a,struct frame_entry,elem)->uaddr < hash_entry(b,struct frame_entry,elem)->uaddr;
 }
